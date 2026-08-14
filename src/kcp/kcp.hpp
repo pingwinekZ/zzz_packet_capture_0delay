@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <print>
 #include <span>
 #include <vector>
 
@@ -23,14 +24,20 @@ namespace KCP {
 			std::deque<Segment> rcvQueue;
 			uint32_t rcvNxt = 0;
 			bool rcvNxtKnown = false;
+			uint32_t conv = 0;
+			bool convKnown = false;
+			int64_t lastProgressSec = 0;
 		};
 
 		Stream incomingStream;
 		Stream outgoingStream;
 
-		static constexpr size_t maxRcvBuf = 1024;
+		static constexpr size_t maxRcvBuf = 512;
+		// A gap that stays unfilled for this many seconds is considered lost forever:
+		// we are a passive observer, so the game never retransmits segments it ACKed to the server.
+		static constexpr int64_t maxGapSeconds = 2;
 
-		std::vector<std::vector<uint8_t>> receive(std::span<const uint8_t> data, serialization::Direction direction) {
+		std::vector<std::vector<uint8_t>> receive(std::span<const uint8_t> data, serialization::Direction direction, int64_t unixSeconds) {
 			std::vector<std::vector<uint8_t>> messages;
 			auto &stream = direction == serialization::Direction::outgoing ? outgoingStream : incomingStream;
 
@@ -44,6 +51,18 @@ namespace KCP {
 				if (header.len > remaining) break;
 
 				if (header.cmd == cmdPush && header.len > 0) {
+					if (stream.convKnown && stream.conv != header.conv) {
+						std::println("kcp: connection changed conv {} -> {}, resetting {} stream", stream.conv, header.conv, direction == serialization::Direction::outgoing ? "outgoing" : "incoming");
+						stream.rcvBuf.clear();
+						stream.rcvQueue.clear();
+						stream.rcvNxtKnown = false;
+						stream.conv = header.conv;
+					}
+					if (!stream.convKnown) {
+						stream.conv = header.conv;
+						stream.convKnown = true;
+					}
+
 					Segment seg{
 						.sn = header.sn,
 						.frg = header.frg,
@@ -56,6 +75,7 @@ namespace KCP {
 					if (!stream.rcvNxtKnown) {
 						stream.rcvNxt = header.sn;
 						stream.rcvNxtKnown = true;
+						stream.lastProgressSec = unixSeconds;
 					}
 
 					int32_t diff = static_cast<int32_t>(header.sn - stream.rcvNxt);
@@ -63,11 +83,18 @@ namespace KCP {
 						stream.rcvBuf.emplace(header.sn, std::move(seg));
 					}
 
-					promote(stream);
+					promote(stream, unixSeconds);
 
 					if (stream.rcvBuf.size() > maxRcvBuf) {
+						std::println("kcp: gap backlog exceeded {}, skipping to sn={} (lost segment never retransmitted)", maxRcvBuf, stream.rcvBuf.begin()->first);
 						stream.rcvNxt = stream.rcvBuf.begin()->first;
-						promote(stream);
+						promote(stream, unixSeconds);
+					}
+
+					if (!stream.rcvBuf.empty() && unixSeconds - stream.lastProgressSec > maxGapSeconds) {
+						std::println("kcp: gap not filled for {}s (sn={} lost), skipping to sn={}", maxGapSeconds, stream.rcvNxt, stream.rcvBuf.begin()->first);
+						stream.rcvNxt = stream.rcvBuf.begin()->first;
+						promote(stream, unixSeconds);
 					}
 				}
 
@@ -106,13 +133,14 @@ namespace KCP {
 			return messages;
 		}
 
-		static void promote(Stream &stream) {
+		static void promote(Stream &stream, int64_t unixSeconds) {
 			while (true) {
 				auto it = stream.rcvBuf.find(stream.rcvNxt);
 				if (it == stream.rcvBuf.end()) break;
 				stream.rcvQueue.push_back(std::move(it->second));
 				stream.rcvBuf.erase(it);
 				stream.rcvNxt++;
+				stream.lastProgressSec = unixSeconds;
 			}
 		}
 	};

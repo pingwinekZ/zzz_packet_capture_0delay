@@ -3,6 +3,7 @@
 #include "ui/home.hpp"
 
 #ifdef _WIN32
+#include <cstdio>
 #include <windows.h>
 #endif
 
@@ -15,6 +16,9 @@ int main(int argc, char **argv) {
 		FILE *stream = nullptr;
 		freopen_s(&stream, "CONOUT$", "w", stdout);
 		freopen_s(&stream, "CONOUT$", "w", stderr);
+		// Unbuffer so capture output streams live instead of arriving in 4 KB bursts
+		std::setvbuf(stdout, nullptr, _IONBF, 0);
+		std::setvbuf(stderr, nullptr, _IONBF, 0);
 	}
 #endif
 
