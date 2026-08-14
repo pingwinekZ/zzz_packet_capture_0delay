@@ -72,6 +72,30 @@ namespace serialization {
 		uint32_t cmdGetEquipDataScRsp;
 		uint32_t cmdGetWeaponDataScRsp;
 		uint32_t cmdGetAvatarDataScRsp;
+		uint32_t cmdPlayerSyncScNotify;
+		uint32_t cmdDismantleEquipCsReq;
+
+		struct SyncAvatarData {
+			uint32_t avatarSync;
+			uint32_t avatars;
+			uint32_t dels;
+		};
+
+		struct SyncItemData {
+			uint32_t itemSync;
+			uint32_t equips;
+			uint32_t weapons;
+			uint32_t deletedEquips;
+		};
+
+		struct EquipDismantle {
+			uint32_t uid;
+			uint32_t uids;
+		};
+
+		SyncAvatarData syncAvatarData;
+		SyncItemData syncItemData;
+		EquipDismantle equipDismantle;
 
 		AgentData agentData;
 		AgentInfo agentInfo;

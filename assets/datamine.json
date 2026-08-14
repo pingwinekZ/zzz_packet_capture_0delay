@@ -9,6 +9,23 @@
     "cmdGetEquipDataScRsp": 4528,
     "cmdGetWeaponDataScRsp": 3984,
     "cmdGetAvatarDataScRsp": 2613,
+"cmdPlayerSyncScNotify":  1587,
+"cmdDismantleEquipCsReq":  5185,
+    "syncAvatarData":  {
+                           "avatarSync":  9,
+                           "avatars":  12,
+                           "dels":  14
+                       },
+    "syncItemData":  {
+                          "itemSync":  15,
+                          "equips":  15,
+                          "weapons":  1,
+                          "deletedEquips":  10
+                      },
+    "equipDismantle":  {
+                            "uid":  14,
+                            "uids":  2
+                        },
     "agentData": {
         "agents": 12
     },

@@ -14,6 +14,7 @@
 #include "google/protobuf/unknown_field_set.h"
 #include "observer.hpp"
 #include "print"
+#include "sync.hpp"
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -27,10 +28,9 @@
 #include <pcapplusplus/PcapLiveDeviceList.h>
 #endif
 #include <ranges>
+#include <filesystem>
 #include <thread>
 
-
-// #include "util/proto.hpp"
 
 struct Pcap {
 	serialization::PacketList capturedPackets;
@@ -48,6 +48,10 @@ struct Pcap {
 	pcpp::PcapLiveDevice *device = nullptr;
 #endif
 	std::jthread captureThread;
+	std::jthread watchdogThread;
+	std::atomic<uint64_t> packetCount{0};
+	std::atomic<int64_t> lastPacketSec{0};
+	std::atomic<bool> captureRunning{false};
 
 	inline void storeCapturePacketsToFile() {
 		std::ofstream file("captured_packets.json");
@@ -97,6 +101,7 @@ struct Pcap {
 		auto decrypted = session.decryptBody(body);
 
 		auto &datamine = serialization::Datamine::get();
+		pcap::SyncApplier syncApplier{discs, engines, agents};
 
 		if (!session.serverRandKey && messageHeader.commandId == datamine.cmdPlayerGetTokenScRsp) {
 			try {
@@ -123,6 +128,21 @@ struct Pcap {
 		std::println("cmd {} ({} bytes):", messageHeader.commandId, decrypted.size());
 		parsedPackets.emplace_back(fields);
 
+		if (messageHeader.commandId == datamine.cmdPlayerSyncScNotify) {
+			auto result = syncApplier.applyPlayerSync(*fields);
+			if (result.changed) {
+				onEventUpdate.notify();
+				std::println("  sync: {} upserted, {} removed", result.upserts, result.removals);
+			}
+		}
+
+		if (messageHeader.commandId == datamine.cmdDismantleEquipCsReq) {
+			auto result = syncApplier.applyEquipDismantle(*fields);
+			if (result.changed) {
+				onEventUpdate.notify();
+				std::println("  dismantle: {} removed", result.removals);
+			}
+		}
 		if (messageHeader.commandId == datamine.cmdGetEquipDataScRsp) {
 			// util::printUFS(*fields);
 			for (int i = 0; i < fields->field_count(); ++i) {
@@ -130,7 +150,7 @@ struct Pcap {
 				if (f.number() != datamine.equipData.discs) continue;
 				google::protobuf::UnknownFieldSet nested;
 				if (nested.ParseFromString(f.length_delimited())) {
-					discs.push_back(data::DiscInfo::fromUFS(nested));
+					syncApplier.upsertDisc(data::DiscInfo::fromUFS(nested));
 				}
 			}
 			onEventUpdate.notify();
@@ -144,7 +164,7 @@ struct Pcap {
 				if (f.number() != datamine.weaponData.weapons) continue;
 				google::protobuf::UnknownFieldSet nested;
 				if (nested.ParseFromString(f.length_delimited()))
-					engines.push_back(data::WeaponInfo::fromUFS(nested));
+					syncApplier.upsertEngine(data::WeaponInfo::fromUFS(nested));
 			}
 			onEventUpdate.notify();
 			std::println("  decoded {} weapons", engines.size());
@@ -157,7 +177,7 @@ struct Pcap {
 				if (f.number() != datamine.agentData.agents) continue;
 				google::protobuf::UnknownFieldSet nested;
 				if (nested.ParseFromString(f.length_delimited()))
-					agents.push_back(data::AgentInfo::fromUFS(nested));
+					syncApplier.upsertAgent(data::AgentInfo::fromUFS(nested));
 			}
 			onEventUpdate.notify();
 			std::println("  decoded {} avatars", agents.size());
@@ -165,13 +185,15 @@ struct Pcap {
 	}
 
 	inline void processPacket(std::span<const uint8_t> data, int64_t unixSeconds, serialization::Direction direction) {
-		auto messages = kcp.receive(data, direction);
+		auto messages = kcp.receive(data, direction, unixSeconds);
 		for (auto &message: messages) {
 			processMessageBody(message, unixSeconds);
 		}
 	}
 
 	inline void processRawPacket(pcpp::RawPacket *rawPacket) {
+		packetCount++;
+		lastPacketSec.store(rawPacket->getPacketTimeStamp().tv_sec);
 		pcpp::Packet parsedPacket(rawPacket);
 		auto *udpLayer = parsedPacket.getLayerOfType<pcpp::UdpLayer>();
 		if (!udpLayer) return;
@@ -196,12 +218,26 @@ struct Pcap {
 
 #ifdef _WIN32
 		device = std::make_unique<pcpp::WinDivertDevice>();
-		if (!device->open("true")) {
+		// Filter at the driver level: only game traffic (port 20501) enters the queue.
+		// Capturing everything floods the queue with unrelated traffic and drops game
+		// segments, which are never retransmitted to this passive observer.
+		if (!device->open("udp.DstPort == 20501 or udp.SrcPort == 20501")) {
 			std::println("Failed to open WinDivert device");
 			device.reset();
 			return;
 		}
 
+		// Larger queue so login bursts don't drop packets; dropped segments never
+		// get retransmitted to this passive observer, which used to stall KCP forever.
+		device->setPacketQueueParams({
+			{pcpp::WinDivertDevice::QueueParam::QueueLength, 8192},
+			{pcpp::WinDivertDevice::QueueParam::QueueTime, 8192},
+			{pcpp::WinDivertDevice::QueueParam::QueueSize, 64 * 1024 * 1024},
+		});
+
+		packetCount = 0;
+		lastPacketSec = 0;
+		captureRunning = true;
 		std::println("Capture started");
 
 		captureThread = std::jthread([this]() {
@@ -216,6 +252,20 @@ struct Pcap {
 			);
 			if (result.status != pcpp::WinDivertDevice::ReceiveResult::Status::Completed) {
 				std::println("WinDivert capture stopped: {} (code {})", result.error, result.errorCode);
+			}
+			captureRunning = false;
+		});
+
+		// Watchdog: report capture liveness so silent stalls are visible
+		watchdogThread = std::jthread([this]() {
+			while (captureRunning.load()) {
+				std::this_thread::sleep_for(std::chrono::seconds(5));
+				int64_t last = lastPacketSec.load();
+				if (last == 0) continue;
+				int64_t now = std::chrono::system_clock::now().time_since_epoch().count() / 1'000'000'000;
+				if (now - last > 10) {
+					std::println("capture watchdog: no packets for {}s ({} packets total) - is the game sending?", now - last, packetCount.load());
+				}
 			}
 		});
 #else
@@ -256,6 +306,10 @@ struct Pcap {
 
 	inline void stop() {
 #ifdef _WIN32
+		captureRunning = false;
+		if (watchdogThread.joinable()) {
+			watchdogThread.join();
+		}
 		if (!device || !device->isOpened()) return;
 		device->stopReceive();
 #else
@@ -272,6 +326,6 @@ struct Pcap {
 		device->close();
 		device = nullptr;
 #endif
-		std::println("Capture stopped");
+		std::println("Capture stopped ({} packets)", packetCount.load());
 	}
 };
