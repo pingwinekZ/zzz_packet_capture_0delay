@@ -41,6 +41,11 @@ namespace ui {
 			onEventUpdate = pcap.onEventUpdate.observe([this]() {
 				setState();
 			});
+			wsEventObserver = pcap.onEventUpdate.observe([this]() {
+				if (!isLiveExporting) return;
+				auto json = makeLiveZodJson();
+				if (!json.empty()) wsServer->broadcastText(json);
+			});
 			setState([&]() {
 				isLoading = false;
 			});
@@ -125,6 +130,33 @@ namespace ui {
 		}
 
 		return std::nullopt;
+	}
+
+	std::string Home::State::makeLiveZodJson() {
+		// Live export ignores the export filters: with replace semantics on the
+		// site side, a filtered category would delete the unfiltered items there.
+		auto zod = Serialization::Zod::IZOD::fromPcap(pcap, data::ExportSettings{
+														   .minDiscRarity = 0,
+														   .minDiscLevel = 0,
+														   .minEngineRarity = 0,
+														   .minEngineLevel = 0,
+														   .minAgentRarity = 0,
+														   .minAgentLevel = 0,
+														   .exportDiscs = true,
+														   .exportAgents = true,
+														   .exportEngines = true,
+													   });
+		// Empty categories must be null, never []: an empty array would be
+		// interpreted as "everything was deleted" by the site's import.
+		if (zod.discs && zod.discs->empty()) zod.discs.reset();
+		if (zod.characters && zod.characters->empty()) zod.characters.reset();
+		if (zod.wengines && zod.wengines->empty()) zod.wengines.reset();
+		auto json = glz::write_json(zod);
+		if (!json) {
+			std::println("Failed to serialize ZOD: {}", static_cast<int>(json.error()));
+			return {};
+		}
+		return *json;
 	}
 
 
@@ -232,6 +264,26 @@ namespace ui {
 												});
 											},
 											.child = isCapturing ? "Capturing..." : "Start capture",
+										},
+										Button{
+											.onClick = [this]() {
+												if (isLiveExporting) {
+													if (wsServer) wsServer->stop();
+													isLiveExporting = false;
+												} else {
+													if (!wsServer) wsServer = std::make_unique<websocket::Server>();
+													wsServer->onSnapshotRequested = [this]() {
+														return makeLiveZodJson();
+													};
+													if (wsServer->start(23313)) {
+														isLiveExporting = true;
+														auto json = makeLiveZodJson();
+														if (!json.empty()) wsServer->broadcastText(json);
+													}
+												}
+												setState();
+											},
+											.child = isLiveExporting ? "Live export: On" : "Live export: Off",
 										},
 									},
 								},

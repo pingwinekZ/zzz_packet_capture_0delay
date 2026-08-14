@@ -1,2 +1,5 @@
 build/
 .cache/
+hsr-optimizer
+reliquary-archiver
+zenless-optimizer-0delay
