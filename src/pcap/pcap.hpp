@@ -29,6 +29,8 @@
 #endif
 #include <ranges>
 #include <filesystem>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 
@@ -49,6 +51,8 @@ struct Pcap {
 #endif
 	std::jthread captureThread;
 	std::jthread watchdogThread;
+	std::mutex watchdogMutex;
+	std::condition_variable watchdogCv;
 	std::atomic<uint64_t> packetCount{0};
 	std::atomic<int64_t> lastPacketSec{0};
 	std::atomic<bool> captureRunning{false};
@@ -251,15 +255,21 @@ struct Pcap {
 				64
 			);
 			if (result.status != pcpp::WinDivertDevice::ReceiveResult::Status::Completed) {
-				std::println("WinDivert capture stopped: {} (code {})", result.error, result.errorCode);
+				if (captureRunning.load()) {
+					std::println("WinDivert capture stopped unexpectedly: {} (code {})", result.error, result.errorCode);
+				}
 			}
 			captureRunning = false;
 		});
 
-		// Watchdog: report capture liveness so silent stalls are visible
+		// Watchdog: report capture liveness so silent stalls are visible.
+		// Waits on a condition variable so stop() can wake it immediately
+		// instead of waiting up to 5s for the sleep to expire.
 		watchdogThread = std::jthread([this]() {
+			std::unique_lock lock(watchdogMutex);
 			while (captureRunning.load()) {
-				std::this_thread::sleep_for(std::chrono::seconds(5));
+				watchdogCv.wait_for(lock, std::chrono::seconds(5));
+				if (!captureRunning.load()) break;
 				int64_t last = lastPacketSec.load();
 				if (last == 0) continue;
 				int64_t now = std::chrono::system_clock::now().time_since_epoch().count() / 1'000'000'000;
@@ -307,22 +317,32 @@ struct Pcap {
 	inline void stop() {
 #ifdef _WIN32
 		captureRunning = false;
+		watchdogCv.notify_all();
 		if (watchdogThread.joinable()) {
 			watchdogThread.join();
 		}
-		if (!device || !device->isOpened()) return;
+		if (!device || !device->isOpened()) {
+			if (captureThread.joinable()) {
+				captureThread.join();
+			}
+			return;
+		}
 		device->stopReceive();
-#else
-		if (!device || !device->isOpened()) return;
-		device->stopCapture();
-#endif
+		// stopReceive() only flips a flag; the capture thread stays blocked in
+		// an infinite overlapped wait until the next packet arrives. Closing the
+		// WinDivert handle aborts the pending receive and wakes it immediately,
+		// otherwise joining can block forever when the game is silent.
+		device->close();
+		device.reset();
 		if (captureThread.joinable()) {
 			captureThread.join();
 		}
-#ifdef _WIN32
-		device->close();
-		device.reset();
 #else
+		if (!device || !device->isOpened()) return;
+		device->stopCapture();
+		if (captureThread.joinable()) {
+			captureThread.join();
+		}
 		device->close();
 		device = nullptr;
 #endif
