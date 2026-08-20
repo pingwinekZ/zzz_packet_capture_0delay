@@ -133,8 +133,12 @@ namespace ui {
 	}
 
 	std::string Home::State::makeLiveZodJson() {
-		// Live export ignores the export filters: with replace semantics on the
-		// site side, a filtered category would delete the unfiltered items there.
+		// Live export honors the category toggles: a disabled category is
+		// exported as null (i.e. omitted), which the site's replace-semantics
+		// import leaves untouched. For engines this also drops the per-character
+		// w-engine fields, so the equip status does not update either.
+		// Min level/rarity filters are ignored on purpose: applying them would
+		// make the site delete every item below the threshold on each import.
 		auto zod = Serialization::Zod::IZOD::fromPcap(pcap, data::ExportSettings{
 														   .minDiscRarity = 0,
 														   .minDiscLevel = 0,
@@ -142,9 +146,9 @@ namespace ui {
 														   .minEngineLevel = 0,
 														   .minAgentRarity = 0,
 														   .minAgentLevel = 0,
-														   .exportDiscs = true,
-														   .exportAgents = true,
-														   .exportEngines = true,
+														   .exportDiscs = exportSettings.exportDiscs,
+														   .exportAgents = exportSettings.exportAgents,
+														   .exportEngines = exportSettings.exportEngines,
 													   });
 		// Empty categories must be null, never []: an empty array would be
 		// interpreted as "everything was deleted" by the site's import.

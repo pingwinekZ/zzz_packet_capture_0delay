@@ -6,11 +6,15 @@ namespace Serialization::Zod {
 	IZOD IZOD::fromPcap(const Pcap &pcap, const data::ExportSettings &exportSettings) {
 		std::unordered_map<uint32_t, std::string> engineMap;
 		std::unordered_map<uint32_t, std::string> discMap;
+		std::unordered_map<uint32_t, const data::WeaponInfo *> engineByUid;
 		for (const auto &agent: pcap.agents) {
 			engineMap[agent.weaponUid] = util::strings::toZodKey(std::string{agent.name()});
 			for (const auto &equip: agent.dressed_equips) {
 				discMap[equip.uid] = util::strings::toZodKey(std::string{agent.name()});
 			}
+		}
+		for (const auto &engine: pcap.engines) {
+			engineByUid[engine.uid] = &engine;
 		}
 
 		auto &nanokaData = serialization::NanokaData::get();
@@ -20,9 +24,9 @@ namespace Serialization::Zod {
 							? std::optional(pcap.agents | std::views::filter([&](const data::AgentInfo &agent) {
 												return agent.level >= exportSettings.minAgentLevel && (nanokaData.characters.at(agent.id).rank + 1) >= exportSettings.minAgentRarity;
 											})
-											| std::views::transform([](const data::AgentInfo &agent) {
-												  return IAgent::fromInstance(agent);
-											  })
+											| std::views::transform([&](const data::AgentInfo &agent) {
+											  return IAgent::fromInstance(agent, engineByUid, exportSettings.exportEngines);
+										  })
 											| std::ranges::to<std::vector<IAgent>>())
 							: std::nullopt,
 			.discs = exportSettings.exportDiscs
