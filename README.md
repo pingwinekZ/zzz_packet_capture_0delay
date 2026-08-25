@@ -1,11 +1,11 @@
 # About
 A packet capture based scanner for Zenless Zone Zero. Used to quickly gather all your discs, engines and agents data from the game in a single click.
 
-It can be used to quickly import all your data into [Zenless Optimizer](https://frzyc.github.io/zenless-optimizer/) or other tools that accept the same data format.
+It can be used to quickly import all your data into [Zenless Optimizer](https://pingwinekz.github.io/zenless-optimizer-0delay/) or other tools that accept the same data format.
 
 ![](preview.png)
 # Usage
-- Download the latest version from the [releases page](https://github.com/AleXu224/zzz_packet_capture/releases)
+- Download the latest version from the [releases page](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases)
 - Extract the archive to a folder of your choice and start `zzz_packet_capture.exe`
   - The program needs to start with administrator privileges in order to capture packets from the game, you will automatically be prompted to do so
   - On linux you will need to manually start the program with sudo or run `sudo setcap cap_net_raw,cap_net_admin=eip zzz_packet_capture` to allow it to capture packets without root privileges
