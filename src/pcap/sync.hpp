@@ -7,6 +7,7 @@
 #include "google/protobuf/unknown_field_set.h"
 #include <algorithm>
 #include <cstdint>
+#include <print>
 #include <vector>
 
 
@@ -25,7 +26,9 @@ namespace pcap {
 			std::vector<data::AgentInfo> &agents
 		) : discs_(discs), engines_(engines), agents_(agents) {}
 
-		// PlayerSyncScNotify: avatarSync (9) + itemSync (15) submessages
+		// PlayerSyncScNotify (3.1: cmd 1587, 3.2: cmd 1175 LHFHMNPBMGI):
+		// avatarSync (9, stable) + itemSync (15, stable) submessages.
+		// 3.2: AvatarSync IPFJFJMMLEJ, ItemSync GANACMDAINO.
 		[[nodiscard]] SyncResult applyPlayerSync(const google::protobuf::UnknownFieldSet &ufs) {
 			SyncResult out;
 			auto &datamine = serialization::Datamine::get();
@@ -54,7 +57,10 @@ namespace pcap {
 			return out;
 		}
 
-		// DismantleEquipCsReq (5185): removed equip uids at repeated packed field uids (2)
+		// DismantleEquipCsReq (3.1: cmd 5185 JHCKDGMDHCK, field uids 2;
+		// 3.2: cmd 4977 JMDAOJKIOMA, single repeated uint32 field 15).
+		// Confirmed from 3.2 capture: cmd 4977 (4 bytes) immediately preceded
+		// the ItemSync removal of disc 15916.
 		[[nodiscard]] SyncResult applyEquipDismantle(const google::protobuf::UnknownFieldSet &ufs) {
 			SyncResult out;
 			auto &datamine = serialization::Datamine::get();
@@ -135,6 +141,8 @@ namespace pcap {
 			}
 		}
 
+		// AvatarSync (3.1 GBBNCJDDDFP: avatars 12, dels 14;
+		// 3.2 IPFJFJMMLEJ: avatars 13, dels 4).
 		[[nodiscard]] SyncResult applyAvatarSync(const google::protobuf::UnknownFieldSet &ufs) {
 			SyncResult out;
 			auto &datamine = serialization::Datamine::get();
@@ -161,21 +169,27 @@ namespace pcap {
 			return out;
 		}
 
+		// ItemSync (3.1 OHHBBCJGABO: equips 15, weapons 1, deletedEquips 10;
+		// 3.2 GANACMDAINO: equips 12, weapons 3, deletedEquips 8).
+		// deletedEquips 8 confirmed from 3.2 capture ("fallback removal of
+		// disc 15916 via item field 8"). The fallback below is kept: it tries
+		// every other uint32 list and only removes on UID match, so the log
+		// reveals the new field number the same way next version.
 		[[nodiscard]] SyncResult applyItemSync(const google::protobuf::UnknownFieldSet &ufs) {
 			SyncResult out;
 			auto &datamine = serialization::Datamine::get();
 			for (int i = 0; i < ufs.field_count(); ++i) {
 				const auto &f = ufs.field(i);
-				if (f.type() != google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED) continue;
-
-				if (f.number() == datamine.syncItemData.equips) {
+				if (f.number() == datamine.syncItemData.equips
+					&& f.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED) {
 					google::protobuf::UnknownFieldSet nested;
 					if (nested.ParseFromString(f.length_delimited())) {
 						upsertDisc(data::DiscInfo::fromUFS(nested));
 						out.changed = true;
 						++out.upserts;
 					}
-				} else if (f.number() == datamine.syncItemData.weapons) {
+				} else if (f.number() == datamine.syncItemData.weapons
+					&& f.type() == google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED) {
 					google::protobuf::UnknownFieldSet nested;
 					if (nested.ParseFromString(f.length_delimited())) {
 						upsertEngine(data::WeaponInfo::fromUFS(nested));
@@ -189,6 +203,21 @@ namespace pcap {
 						if (removeDisc(uid)) {
 							out.changed = true;
 							++out.removals;
+						}
+					}
+				} else {
+					// 3.2 bring-up fallback: unknown uint32 lists may carry deleted
+					// disc uids under a new field number. Only acts on UID match.
+					if (f.type() != google::protobuf::UnknownField::TYPE_LENGTH_DELIMITED
+						&& f.type() != google::protobuf::UnknownField::TYPE_VARINT)
+						continue;
+					std::vector<uint32_t> uids;
+					collectUints(f, uids);
+					for (const auto uid: uids) {
+						if (removeDisc(uid)) {
+							out.changed = true;
+							++out.removals;
+							std::println("  sync: fallback removal of disc {} via item field {}", uid, f.number());
 						}
 					}
 				}

@@ -38,22 +38,24 @@ if(WIN32)
 endif()
 add_dependencies(zzz_packet_capture Assets)
 
-# Offline validation tool: replays recorded cmd dumps through the live-sync parser
-add_executable(zzz_sync_replay tools/replay_sync.cpp)
+# Offline validation tool: replays recorded cmd dumps through the live-sync parser.
+# EXCLUDE_FROM_ALL so release builds/packages only ship zzz_packet_capture;
+# build explicitly via `ninja zzz_sync_replay` when needed.
+add_executable(zzz_sync_replay EXCLUDE_FROM_ALL tools/replay_sync.cpp)
 target_compile_features(zzz_sync_replay PUBLIC cxx_std_23)
 target_include_directories(zzz_sync_replay PRIVATE src glt/include)
 target_compile_definitions(zzz_sync_replay PRIVATE NOMINMAX)
 target_link_libraries(zzz_sync_replay PRIVATE glaze::glaze protobuf::libprotobuf protobuf::libprotobuf-lite)
 
-# Self-test for the WebSocket live-export server
-add_executable(zzz_ws_test tools/ws_test.cpp)
+# Self-test for the WebSocket live-export server (dev-only, see above)
+add_executable(zzz_ws_test EXCLUDE_FROM_ALL tools/ws_test.cpp)
 target_compile_features(zzz_ws_test PUBLIC cxx_std_23)
 target_include_directories(zzz_ws_test PRIVATE src)
 target_compile_definitions(zzz_ws_test PRIVATE NOMINMAX)
 target_link_libraries(zzz_ws_test PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
-# Standalone server harness for E2E tests with a real WebSocket client
-add_executable(zzz_ws_serve tools/ws_serve.cpp)
+# Standalone server harness for E2E tests with a real WebSocket client (dev-only)
+add_executable(zzz_ws_serve EXCLUDE_FROM_ALL tools/ws_serve.cpp)
 target_compile_features(zzz_ws_serve PUBLIC cxx_std_23)
 target_include_directories(zzz_ws_serve PRIVATE src)
 target_compile_definitions(zzz_ws_serve PRIVATE NOMINMAX)

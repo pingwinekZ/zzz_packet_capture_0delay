@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Temporary tool: decode sync_1587.bin (PlayerSyncScNotify wire dumps) for Phase 4a validation.
+"""Temporary tool: decode PlayerSyncScNotify wire dumps for sync validation.
 
 Format: repeated records of [uint32 LE payload length][protobuf wire bytes].
-Run: python tools/decode_sync_1587.py [path to sync_1587.bin]
+Run: python tools/decode_sync_1587.py [path to sync_1175.bin]
+(history: 3.1 sync cmd was 1587, 3.2 sync cmd is 1175; filename kept for now)
 """
 
 import json
@@ -13,10 +14,37 @@ from collections import Counter
 
 RECORD_LEN = 4
 
-# production (nap.json) leaf field numbers from datamine.json
-DISC_UID = 6
-WEAPON_UID = 10
-AVATAR_ID = 13
+
+def load_datamine():
+    base = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(base, "..", "assets", "datamine.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+DATAMINE = load_datamine()
+
+# leaf field numbers from datamine.json (3.1: 6/10/13, 3.2: 14/6/2)
+DISC_UID = DATAMINE["discInfo"]["uid"]
+WEAPON_UID = DATAMINE["weaponInfo"]["uid"]
+AVATAR_ID = DATAMINE["agentInfo"]["id"]
+# top-level sync field numbers (stable 9/15 across 3.1->3.2, read dynamically)
+AVATAR_SYNC_NUM = DATAMINE["syncAvatarData"]["avatarSync"]
+ITEM_SYNC_NUM = DATAMINE["syncItemData"]["itemSync"]
+
+
+def find_sync_message(nap, needle_type, needle_number):
+    """Find AvatarSync/ItemSync-like message: contains repeated needle_type at
+    the datamine-configured field number (3.2: avatar->13 in IPFJFJMMLEJ,
+    disc->12 in GANACMDAINO). Falls back to any container of that type."""
+    for e in nap:
+        for f in e["fields"]:
+            if f["type"] == needle_type and f["repeated"] and f["number"] == needle_number:
+                return e
+    for e in nap:
+        for f in e["fields"]:
+            if f["type"] == needle_type and f["repeated"]:
+                return e
+    return None
 
 
 def load_descriptors():
@@ -29,8 +57,29 @@ def load_descriptors():
     def fmap(msg):
         return {f["number"]: f for f in msg["fields"]}
 
-    avatar_f = fmap(by_name["GBBNCJDDDFP"])   # AvatarSync-like
-    item_f = fmap(by_name["OHHBBCJGABO"])     # ItemSync-like
+    # Resolve the Login-response element types first (they embed the disc /
+    # weapon / avatar shapes), then find their sync containers structurally so
+    # obfuscated message names need no hardcoding per version.
+    get_equip = next(e for e in nap if e["cmd_id"] == DATAMINE["cmdGetEquipDataScRsp"])
+    get_weapon = next(e for e in nap if e["cmd_id"] == DATAMINE["cmdGetWeaponDataScRsp"])
+    get_avatar = next(e for e in nap if e["cmd_id"] == DATAMINE["cmdGetAvatarDataScRsp"])
+    disc_type = next(f["type"] for f in get_equip["fields"] if f["number"] == DATAMINE["equipData"]["discs"])
+    weapon_type = next(f["type"] for f in get_weapon["fields"] if f["number"] == DATAMINE["weaponData"]["weapons"])
+    avatar_type = next(f["type"] for f in get_avatar["fields"] if f["number"] == DATAMINE["agentData"]["agents"])
+    avatar_msg = find_sync_message(nap, avatar_type, DATAMINE["syncAvatarData"]["avatars"])
+    item_msg = find_sync_message(nap, disc_type, DATAMINE["syncItemData"]["equips"])
+    # 3.1 fallback names (pre-structural lookup)
+    avatar_msg = avatar_msg or by_name.get("GBBNCJDDDFP")
+    item_msg = item_msg or by_name.get("OHHBBCJGABO")
+    # 3.2 known names
+    avatar_msg = avatar_msg or by_name.get("IPFJFJMMLEJ")
+    item_msg = item_msg or by_name.get("GANACMDAINO")
+    if avatar_msg is None or item_msg is None:
+        raise KeyError("AvatarSync/ItemSync-like message not found in nap.json")
+    print(f"AvatarSync-like: {avatar_msg['name']}, ItemSync-like: {item_msg['name']}", file=sys.stderr)
+
+    avatar_f = fmap(avatar_msg)
+    item_f = fmap(item_msg)
     return avatar_f, item_f
 
 
@@ -167,7 +216,8 @@ def find_submsg(fields, num):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "sync_1587.bin"
+    default_bin = f"sync_{DATAMINE.get('cmdPlayerSyncScNotify', 1175)}.bin"
+    path = sys.argv[1] if len(sys.argv) > 1 else default_bin
     only = [int(x) for x in sys.argv[2:]] or None
     with open(path, "rb") as fh:
         data = fh.read()
@@ -212,18 +262,21 @@ def main():
     print(", ".join(f"{num}(x{count})" for num, count in freq.most_common()))
 
     print("===== summary: per-record sync contents =====")
-    print("avatarSync(9): avatar list 12 -> avatar ids; uint32 lists (possible del uids)")
-    print("itemSync(15):  equip list 15 -> disc uids; weapon list 1 -> weapon uids; uint32 lists (possible del uids)")
+    av_list = DATAMINE["syncAvatarData"]["avatars"]
+    it_eq = DATAMINE["syncItemData"]["equips"]
+    it_wp = DATAMINE["syncItemData"]["weapons"]
+    print(f"avatarSync({AVATAR_SYNC_NUM}): avatar list {av_list} -> avatar ids; uint32 lists (possible del uids)")
+    print(f"itemSync({ITEM_SYNC_NUM}):  equip list {it_eq} -> disc uids; weapon list {it_wp} -> weapon uids; uint32 lists (possible del uids)")
     for i, rec in enumerate(records):
         try:
             fields, _ = decode(rec)
         except ValueError:
             continue
-        avatar_sync = find_submsg(fields, 9)
-        item_sync = find_submsg(fields, 15)
-        av = collect_uids(avatar_sync or [], [n for n, d in AVATAR_F.items() if is_message_field(d)], AVATAR_ID).get(12, [])
-        eq = collect_uids(item_sync or [], [n for n, d in ITEM_F.items() if is_message_field(d)], DISC_UID).get(15, [])
-        wp = collect_uids(item_sync or [], [n for n, d in ITEM_F.items() if is_message_field(d)], WEAPON_UID).get(1, [])
+        avatar_sync = find_submsg(fields, AVATAR_SYNC_NUM)
+        item_sync = find_submsg(fields, ITEM_SYNC_NUM)
+        av = collect_uids(avatar_sync or [], [n for n, d in AVATAR_F.items() if is_message_field(d)], AVATAR_ID).get(av_list, [])
+        eq = collect_uids(item_sync or [], [n for n, d in ITEM_F.items() if is_message_field(d)], DISC_UID).get(it_eq, [])
+        wp = collect_uids(item_sync or [], [n for n, d in ITEM_F.items() if is_message_field(d)], WEAPON_UID).get(it_wp, [])
         av_u32 = packed_u32s(avatar_sync or [], [n for n, d in AVATAR_F.items() if d["repeated"] and d["is_native_type"]])
         item_u32 = packed_u32s(item_sync or [], [n for n, d in ITEM_F.items() if d["repeated"] and d["is_native_type"]])
         line = f"record {i}: avatars={av} equips={eq} weapons={wp}"
