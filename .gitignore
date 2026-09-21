@@ -15,9 +15,9 @@ tools/.glaze/
 # test in rust/crates/zzz-cli/tests skips itself when they are absent.
 rust/captured_packets.json
 rust/login_capture.json
-# A cache of static.nanoka.cc, refreshed by `zzzcap update`. Delete the line if
-# you would rather commit display names than fetch them.
-assets/nanokaData.json
+# `assets/nanokaData.json` (the `zzzcap update` name cache, 8 KB) is committed:
+# the `cpp_export_parity` goldens were produced against it, so CI needs the same
+# names rather than a live fetch or a skip.
 hsr-optimizer
 reliquary-archiver
 zenless-optimizer-0delay

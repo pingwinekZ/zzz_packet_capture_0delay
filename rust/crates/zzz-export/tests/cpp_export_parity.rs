@@ -249,17 +249,17 @@ fn edge_inventory() -> Inventory {
     }
 }
 
-fn export(inventory: &Inventory, settings: &ExportSettings) -> String {
+fn export(inventory: &Inventory, settings: &ExportSettings) -> Option<String> {
     let data = assets();
-    assert!(
-        !data.nanoka.characters.is_empty(),
-        "assets/nanokaData.json is missing, so the export keys cannot be derived; \
-         run `zzzcap update`"
-    );
+    if data.nanoka.characters.is_empty() {
+        return None;
+    }
     let names = NanokaNames(&data.nanoka);
-    Izod::from_inventory(inventory, &names, settings)
-        .expect("the fixture exports")
-        .to_json()
+    Some(
+        Izod::from_inventory(inventory, &names, settings)
+            .expect("the fixture exports")
+            .to_json(),
+    )
 }
 
 /// Compare over bytes, and show where they diverge rather than dumping two
@@ -298,8 +298,15 @@ fn the_edge_cases_export_the_reference_bytes() {
         eprintln!("skipping: {} is not present", golden.display());
         return;
     }
+    if assets().nanoka.characters.is_empty() {
+        eprintln!(
+            "skipping: assets/nanokaData.json is not present, so the export keys cannot be \
+             derived; run `zzzcap update`"
+        );
+        return;
+    }
     let expected = std::fs::read_to_string(&golden).expect("the golden reads");
-    let actual = export(&edge_inventory(), &ExportSettings::default());
+    let actual = export(&edge_inventory(), &ExportSettings::default()).expect("names are present");
     assert_same_bytes("zod_edge_export.json", &expected, &actual);
 
     // And the fixture really does reach the corners it claims to, so a golden
@@ -347,6 +354,13 @@ fn the_recorded_capture_exports_the_reference_bytes() {
     let intermediate_file = parity_path("zod_inventory.json");
     if !golden.exists() || !intermediate_file.exists() {
         eprintln!("skipping: the recorded-capture goldens are not present");
+        return;
+    }
+    if assets().nanoka.characters.is_empty() {
+        eprintln!(
+            "skipping: assets/nanokaData.json is not present, so the export keys cannot be \
+             derived; run `zzzcap update`"
+        );
         return;
     }
 
@@ -432,7 +446,7 @@ fn the_recorded_capture_exports_the_reference_bytes() {
     assert_same_bytes(
         "zod_export.json",
         &expected,
-        &export(&committed, &ExportSettings::unfiltered()),
+        &export(&committed, &ExportSettings::unfiltered()).expect("names are present"),
     );
 
     // When the dump is here too, the intermediate has to be what the pipeline
