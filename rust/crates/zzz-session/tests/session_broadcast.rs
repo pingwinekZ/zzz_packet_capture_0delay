@@ -12,6 +12,17 @@ use zzz_live::frame::{self, FrameRead};
 const PORT: u16 = 23511;
 const PATIENCE: Duration = Duration::from_secs(20);
 
+/// The recorded login is a real 16 MB session and is not committed, so these
+/// tests only run on the machine that recorded it — the same as
+/// `zzz-cli/tests/login_capture.rs`.
+fn recorded_dump() -> Option<zzz_capture::Dump> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../login_capture.json");
+    if !path.exists() {
+        return None;
+    }
+    Some(zzz_capture::Dump::load(&path).expect("the recorded dump loads"))
+}
+
 fn handshake(stream: &mut TcpStream) {
     stream
         .write_all(
@@ -38,9 +49,10 @@ fn handshake(stream: &mut TcpStream) {
 fn session_broadcasts_snapshots_to_an_early_client() {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets");
     let data = zzz_gamedata::GameData::load(&assets).expect("committed assets load");
-    let dump_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../login_capture.json");
-    let dump = zzz_capture::Dump::load(&dump_path).expect("recorded login loads");
+    let Some(dump) = recorded_dump() else {
+        eprintln!("skipping: rust/login_capture.json is not present");
+        return;
+    };
     assert!(dump.len() > 600, "dump holds a full login");
 
     let server = zzz_live::Server::new();
@@ -105,9 +117,10 @@ fn session_broadcasts_snapshots_to_an_early_client() {
 fn sync_toggles_apply_without_restart() {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets");
     let data = zzz_gamedata::GameData::load(&assets).expect("committed assets load");
-    let dump_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../login_capture.json");
-    let dump = zzz_capture::Dump::load(&dump_path).expect("recorded login loads");
+    let Some(dump) = recorded_dump() else {
+        eprintln!("skipping: rust/login_capture.json is not present");
+        return;
+    };
     let packets: Vec<_> = dump.iter_packets().collect();
 
     let candidates = zzz_session::candidate_seeds(&data, None, None).unwrap();
@@ -165,9 +178,10 @@ fn the_login_baseline_is_not_logged_as_changes() {
 
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets");
     let data = zzz_gamedata::GameData::load(&assets).expect("committed assets load");
-    let dump_path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../login_capture.json");
-    let dump = zzz_capture::Dump::load(&dump_path).expect("recorded login loads");
+    let Some(dump) = recorded_dump() else {
+        eprintln!("skipping: rust/login_capture.json is not present");
+        return;
+    };
 
     let forwarded = std::sync::Arc::new(Mutex::new(Vec::<LogEntry>::new()));
     let sink = std::sync::Arc::clone(&forwarded);
