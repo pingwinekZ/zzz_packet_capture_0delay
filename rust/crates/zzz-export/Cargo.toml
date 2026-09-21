@@ -1,0 +1,20 @@
+[package]
+name = "zzz-export"
+description = "ZOD JSON export for agents, discs and w-engines, ported from src/serialization/zod"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# `to_zod_key` lives in zzz-crypto because the C++ keeps it in `util/strings.hpp`
+# next to the base64 helpers the session handshake also uses.
+zzz-crypto = { path = "../zzz-crypto" }
+zzz-gamedata = { path = "../zzz-gamedata" }
+zzz-scan = { path = "../zzz-scan" }
+
+[dev-dependencies]
+# The parity test rebuilds the golden files from a recorded capture, and writes
+# the neutral intermediate the C++ harness reads. Neither touches the exporter.
+serde_json.workspace = true
+zzz-capture = { path = "../zzz-capture" }

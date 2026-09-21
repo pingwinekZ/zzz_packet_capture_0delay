@@ -1,0 +1,26 @@
+[package]
+name = "zzz-cli"
+description = "zzzcap: capture, replay and inspect Zenless Zone Zero packet data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "zzzcap"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+zzz-capture = { path = "../zzz-capture" }
+zzz-crypto = { path = "../zzz-crypto" }
+zzz-export = { path = "../zzz-export" }
+zzz-gamedata = { path = "../zzz-gamedata" }
+zzz-live = { path = "../zzz-live" }
+zzz-scan = { path = "../zzz-scan" }
+zzz-wire = { path = "../zzz-wire" }
+
+[dev-dependencies]
+# Reading the live snapshots back in the integration test.
+serde_json.workspace = true

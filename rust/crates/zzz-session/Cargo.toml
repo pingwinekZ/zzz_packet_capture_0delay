@@ -1,0 +1,15 @@
+[package]
+name = "zzz-session"
+description = "The live decode-and-serve pipeline shared by the CLI and the GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+zzz-capture = { path = "../zzz-capture" }
+zzz-crypto = { path = "../zzz-crypto" }
+zzz-export = { path = "../zzz-export" }
+zzz-gamedata = { path = "../zzz-gamedata" }
+zzz-live = { path = "../zzz-live" }
+zzz-scan = { path = "../zzz-scan" }

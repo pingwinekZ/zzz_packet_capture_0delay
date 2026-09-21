@@ -1,5 +1,27 @@
 build/
 .cache/
+rust/target/
+# WinDivert runtime files, downloaded rather than committed (see rust/README.md)
+rust/.windivert/
+# Build output of the C++ parity harnesses and tools under tools/: the binaries,
+# the glaze headers they compile against (fetched, not vendored), and the
+# intermediate directory a build can be run in. The .cpp files themselves and
+# tools/.shim/ are committed — they are how the parity fixtures are reproduced.
+tools/*.exe
+tools/*.obj
+tools/.build/
+tools/.glaze/
+# Recorded capture dumps: megabytes of one machine's session, and the regression
+# test in rust/crates/zzz-cli/tests skips itself when they are absent.
+rust/captured_packets.json
+rust/login_capture.json
+# A cache of static.nanoka.cc, refreshed by `zzzcap update`. Delete the line if
+# you would rather commit display names than fetch them.
+assets/nanokaData.json
 hsr-optimizer
 reliquary-archiver
 zenless-optimizer-0delay
+.freebuff
+release
+# Local release packaging (uploaded to the releases page, not committed)
+release/

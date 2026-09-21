@@ -1,0 +1,92 @@
+# Builds the Windows release and publishes it.
+#
+# Push a tag like `v0.1.0` to build and publish a GitHub release with the
+# ready-to-run zip. "Run workflow" builds the same zip without publishing,
+# as a downloadable artifact — useful for a pre-tag check.
+#
+# Only Windows is built: live capture needs WinDivert, and the GUI targets
+# the optimizer running on the same machine.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  WINDIVERT_VERSION: 2.2.2
+  # Pinned in vcpkg-overlay-ports before the C++ tree was dropped; kept here
+  # so CI fetches the exact driver the build script expects.
+  WINDIVERT_SHA512: 92eb2ef98ced175d44de1cdb7c52f2ebc534b6a997926baeb83bfe94cba9287b438f796aff11f6163918bcdbc25bcd4e3383715f139f690d207ce219f846a345
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Fetch WinDivert
+        run: |
+          $wd = "rust/.windivert"
+          $zip = "$wd/WinDivert-$env:WINDIVERT_VERSION-A.zip"
+          $dir = "$wd/WinDivert-$env:WINDIVERT_VERSION-A"
+          New-Item -ItemType Directory $wd -Force | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://github.com/basil00/WinDivert/releases/download/v$env:WINDIVERT_VERSION/WinDivert-$env:WINDIVERT_VERSION-A.zip" `
+            -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA512).Hash.ToLower()
+          if ($hash -ne $env:WINDIVERT_SHA512) { throw "WinDivert hash mismatch" }
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          # Tolerate a top-level folder inside the archive.
+          $nested = Get-ChildItem $dir -Directory | Where-Object { Test-Path "$($_.FullName)/x64/WinDivert.dll" } | Select-Object -First 1
+          if ($nested -and $nested.FullName -ne $dir -and -not (Test-Path "$dir/x64/WinDivert.dll")) {
+            Get-ChildItem $nested.FullName | Move-Item -Destination $dir -Force
+            Remove-Item $nested.FullName -Recurse -Force
+          }
+
+      - name: Check and test
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --all-targets
+          cargo test --workspace
+        working-directory: rust
+
+      - name: Build release
+        run: cargo build --release -p zzz-cli -p zzz-gui
+        working-directory: rust
+
+      - name: Stage package
+        run: |
+          New-Item -ItemType Directory dist/assets -Force | Out-Null
+          Copy-Item rust/target/release/zzzgui.exe, rust/target/release/zzzcap.exe, rust/target/release/WinDivert.dll, rust/target/release/WinDivert64.sys dist/
+          Copy-Item assets/datamine.json, assets/nap.json, assets/manifest.json dist/assets/
+          # The name cache is fetched on first start when absent; ship it when
+          # present so a fresh install works fully offline.
+          if (Test-Path assets/nanokaData.json) { Copy-Item assets/nanokaData.json dist/assets/ }
+          Compress-Archive -Path dist/* -DestinationPath dist/zzz-packet-capture-win64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zzz-packet-capture-win64
+          path: dist/zzz-packet-capture-win64.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/zzz-packet-capture-win64.zip
+          generate_release_notes: true

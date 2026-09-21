@@ -1,0 +1,13 @@
+[package]
+name = "zzz-live"
+description = "Minimal RFC 6455 WebSocket server, ported from src/websocket/websocketServer.hpp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Only for `b64_encode` in the handshake. The C++ reaches for OpenSSL for base64
+# and SHA-1; base64 is already ported next to the other string helpers, and SHA-1
+# is small enough to keep here rather than take a dependency on.
+zzz-crypto = { path = "../zzz-crypto" }

@@ -3,52 +3,27 @@ A packet capture based scanner for Zenless Zone Zero. Used to quickly gather all
 
 It can be used to quickly import all your data into [Zenless Optimizer](https://pingwinekz.github.io/zenless-optimizer-0delay/) or other tools that accept the same data format.
 
-![](preview.png)
 # Usage
 - Download the latest version from the [releases page](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases)
-- Extract the archive to a folder of your choice and start `zzz_packet_capture.exe`
-  - The program needs to start with administrator privileges in order to capture packets from the game, you will automatically be prompted to do so
-  - On linux you will need to manually start the program with sudo or run `sudo setcap cap_net_raw,cap_net_admin=eip zzz_packet_capture` to allow it to capture packets without root privileges
-- Choose your region and click "Start Capture"
-- Close Zenless Zone Zero if you haven't done so already
-- Start the game and log in, the program will automatically capture your data (should be done by the time you see your character in game)
-- Adjust your export settings if you want to, then click "Copy to clipboard" to get the exported data
+- Extract the archive to a folder of your choice and start `zzzgui.exe` **as administrator** (capturing needs the WinDivert driver, which only loads elevated)
+- On first start the app downloads `datamine.json`, `nap.json`, `manifest.json` and the name cache into `../assets` by itself
+- Press "Start capture", then start the game and log in — the region is detected automatically
+- Turn on "Live export" before capturing to serve the inventory to the optimizer at `ws://127.0.0.1:23313/ws`, press "Copy ZOD JSON" to copy the optimizer import to the clipboard, or use `zzzcap.exe export` afterwards to write it to a file
 
 # Disclaimer
-This is gonna break every time a new version comes out. I am singlehandedly maintaining this and reverse engineering is not exactly my forte, so it might take a bit for me to get it working again. If you have experience and want to help your best bet is to help with updating [GracefulDumper](https://github.com/AleXu224/GracefulDumper) to the latest version of the game, since that is the main blocker.
-
+If you have experience and want to help your best bet is to help with updating [GracefulDumper](https://github.com/AleXu224/GracefulDumper) to the latest version of the game, since that is the main blocker.
 If you are eager to help but have no experience then please don't hesitate to reach out and ask for how things are done, I might not be the best at it myself but I can certainly help you get started.
 
 # Building
 
-- Requirements:
-  - [CMake](https://github.com/kitware/cmake)
-  - A recent release of [Clang](https://github.com/llvm/llvm-project)
-    - Other compilers might work but I rarely test them
-  - [Ninja](https://github.com/ninja-build/ninja)
-    - Optional, but recommended for faster builds
-  - [Vulkan SDK](https://vulkan.lunarg.com/sdk/home)
-  - Windows: Visual Studio or Visual Studio Build Tools
-    - Make sure to install the "Desktop development with C++" workload
-  - Linux: only tested with libstdc++ 
-    - other dependencies depend on too many factors to list, CMake will tell you what is missing and needs installing
-- Building:
-  - Clone the repository and initialize the submodules:
-  ```bash
-  git clone https://github.com/AleXu224/zzz_packet_capture
-  cd zzz_packet_capture
-  git submodule update --init --recursive
-  ```
-  - Run cmake to generate the build files and install the dependencies (this will take a while, blame openssl for that):
-  ```bash
-  cmake -B build -G "Ninja Multi-Config" -DCMAKE_C_COMPILER="clang" -DCMAKE_CXX_COMPILER="clang++"
-  
-  cd build
+The app is written in Rust and builds with the MSVC toolchain:
 
-  ninja
-  # or if you want to build a release version
-  ninja -f ./build-Release.ninja
-  ```
+```powershell
+cd rust
+cargo build --release -p zzz-cli -p zzz-gui
+```
+
+This produces `rust/target/release/zzzgui.exe` (the window) and `rust/target/release/zzzcap.exe` (the console tool: `capture` / `replay` / `export` / `live` / `update`). The `WinDivert.dll` / `WinDivert64.sys` next to them come from `rust/.windivert/` (see `rust/README.md`); live capture needs them plus an elevated console. Developer docs live in `rust/README.md`.
 
 # Credits
-Massive thanks to the Reversed Rooms Discord for helping me with the reverse engineering. I wouldn't have been able to do this without them
+Massive thanks to the Reversed Rooms Discord for helping @AleXu224 with the reverse engineering. 

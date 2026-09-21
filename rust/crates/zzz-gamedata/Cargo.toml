@@ -1,0 +1,15 @@
+[package]
+name = "zzz-gamedata"
+description = "Loads and refreshes datamine.json, nap.json and the nanoka.cc data files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+zzz-wire = { path = "../zzz-wire" }
+# The data files are only reachable over HTTPS. rustls is ureq's default provider
+# and needs no system TLS library; see the note in `fetch.rs` about ``native-tls``.
+ureq.workspace = true

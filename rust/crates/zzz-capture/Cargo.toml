@@ -1,0 +1,12 @@
+[package]
+name = "zzz-capture"
+description = "Live UDP capture: WinDivert on Windows, dialed in through a five-function FFI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+zzz-wire = { path = "../zzz-wire" }

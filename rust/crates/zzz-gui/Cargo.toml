@@ -1,0 +1,25 @@
+[package]
+name = "zzz-gui"
+description = "The capture app's window: controls, live export, inventory tabs and a change console"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "zzzgui"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+zzz-capture = { path = "../zzz-capture" }
+zzz-export = { path = "../zzz-export" }
+zzz-gamedata = { path = "../zzz-gamedata" }
+zzz-live = { path = "../zzz-live" }
+zzz-scan = { version = "0.1.0", path = "../zzz-scan" }
+zzz-session = { path = "../zzz-session" }
