@@ -12,7 +12,7 @@ It can be used to quickly import all your data into [Zenless Optimizer](https://
 
 # Disclaimer
 If you have experience and want to help your best bet is to help with updating [GracefulDumper](https://github.com/AleXu224/GracefulDumper) to the latest version of the game, since that is the main blocker.
-If you are eager to help but have no experience then please don't hesitate to reach out and ask for how things are done, I might not be the best at it myself but I can certainly help you get started.
+If you are eager to help but have no experience then please don't hesitate to reach out [AleXu224](https://github.com/AleXu224) and ask for how things are done.
 
 # Building
 
@@ -26,4 +26,4 @@ cargo build --release -p zzz-cli -p zzz-gui
 This produces `rust/target/release/zzzgui.exe` (the window) and `rust/target/release/zzzcap.exe` (the console tool: `capture` / `replay` / `export` / `live` / `update`). The `WinDivert.dll` / `WinDivert64.sys` next to them come from `rust/.windivert/` (see `rust/README.md`); live capture needs them plus an elevated console. Developer docs live in `rust/README.md`.
 
 # Credits
-Massive thanks to the Reversed Rooms Discord for helping @AleXu224 with the reverse engineering. 
+Massive thanks to the Reversed Rooms Discord for helping [AleXu224](https://github.com/AleXu224) with the reverse engineering. 
