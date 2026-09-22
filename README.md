@@ -3,6 +3,12 @@ A packet capture based scanner for Zenless Zone Zero. Used to quickly gather all
 
 It can be used to quickly import all your data into [Zenless Optimizer](https://pingwinekz.github.io/zenless-optimizer-0delay/) or other tools that accept the same data format.
 
+Features of the fork are:
+- Continuous capture - you don't need to relaunch the game to capture again, changes in game like new disc or upgraded disc are captured so the export data is always fresh.
+- Live Export - capture result continuously flowing into the optimizer, so what you see on website matches your in-game data.
+
+<img width="982" height="672" alt="zzzgui_72ozTBJKMD" src="https://github.com/user-attachments/assets/d01620eb-4c59-49fb-b211-604919b1dfb0" />
+
 # Usage
 - Download the latest version from the [releases page](https://github.com/pingwinekZ/zzz_packet_capture_0delay/releases)
 - Extract the archive to a folder of your choice and start `zzzgui.exe` **as administrator** (capturing needs the WinDivert driver, which only loads elevated)
