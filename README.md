@@ -14,7 +14,7 @@ Features of the fork are:
 - Extract the archive to a folder of your choice and start `zzzgui.exe` **as administrator** (capturing needs the WinDivert driver, which only loads elevated)
 - On first start the app downloads `datamine.json`, `nap.json`, `manifest.json` and the name cache into `../assets` by itself
 - Press "Start capture", then start the game and log in — the region is detected automatically
-- Turn on "Live export" before capturing to serve the inventory to the optimizer at `ws://127.0.0.1:23313/ws`, press "Copy ZOD JSON" to copy the optimizer import to the clipboard, or use `zzzcap.exe export` afterwards to write it to a file
+- Turn on "Live export" before capturing to serve the inventory to the optimizer at `ws://127.0.0.1:23313/ws` **OR** press "Copy ZOD JSON" to copy the optimizer import to the clipboard
 
 # Disclaimer
 If you have experience and want to help your best bet is to help with updating [GracefulDumper](https://github.com/AleXu224/GracefulDumper) to the latest version of the game, since that is the main blocker.
