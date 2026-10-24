@@ -180,11 +180,11 @@ mod tests {
         let json = include_str!("../../../../assets/datamine.json");
         let datamine = Datamine::parse(json).expect("assets/datamine.json parses");
 
-        assert_eq!(datamine.cmd_player_get_token_sc_rsp, 4937);
-        assert_eq!(datamine.cmd_player_sync_sc_notify, 1175);
-        assert_eq!(datamine.sync_item_data.deleted_equips, 8);
-        assert_eq!(datamine.agent_info.weapon_uid, 12);
-        assert_eq!(datamine.disc_stat.add_value, 7);
+        assert_eq!(datamine.cmd_player_get_token_sc_rsp, 2452);
+        assert_eq!(datamine.cmd_player_sync_sc_notify, 515);
+        assert_eq!(datamine.sync_item_data.deleted_equips, 13);
+        assert_eq!(datamine.agent_info.weapon_uid, 8);
+        assert_eq!(datamine.disc_stat.add_value, 6);
         assert_eq!(datamine.xor_seeds.len(), 4);
     }
 

@@ -125,18 +125,18 @@ mod tests {
 
     fn nap() -> Protonap {
         Protonap::new(vec![
-            entry(Some(1175), "PlayerSyncScNotify", &[15, 9]),
-            entry(Some(4937), "PlayerGetTokenScRsp", &[1]),
+            entry(Some(515), "PlayerSyncScNotify", &[7, 3]),
+            entry(Some(2452), "PlayerGetTokenScRsp", &[1]),
             entry(None, "NoCmd", &[1]),
-            entry(Some(2470), "GetAvatarDataScRsp", &[2, 1, 3]),
+            entry(Some(7398), "GetAvatarDataScRsp", &[2, 1, 3]),
         ])
     }
 
     #[test]
     fn lookups_by_cmd_id_work_regardless_of_input_order() {
         let nap = nap();
-        assert_eq!(nap.entry_by_cmd(1175).unwrap().name, "PlayerSyncScNotify");
-        assert_eq!(nap.entry_by_cmd(2470).unwrap().name, "GetAvatarDataScRsp");
+        assert_eq!(nap.entry_by_cmd(515).unwrap().name, "PlayerSyncScNotify");
+        assert_eq!(nap.entry_by_cmd(7398).unwrap().name, "GetAvatarDataScRsp");
         assert!(nap.entry_by_cmd(9999).is_none());
     }
 
@@ -144,13 +144,13 @@ mod tests {
     fn fields_are_sorted_by_number_like_the_cpp_version() {
         let nap = nap();
         let numbers: Vec<i32> = nap
-            .entry_by_cmd(1175)
+            .entry_by_cmd(515)
             .unwrap()
             .fields
             .iter()
             .map(|f| f.number)
             .collect();
-        assert_eq!(numbers, vec![9, 15]);
+        assert_eq!(numbers, vec![3, 7]);
     }
 
     #[test]

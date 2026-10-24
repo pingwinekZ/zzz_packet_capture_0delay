@@ -2,8 +2,8 @@
 """Temporary tool: decode PlayerSyncScNotify wire dumps for sync validation.
 
 Format: repeated records of [uint32 LE payload length][protobuf wire bytes].
-Run: python tools/decode_sync_1587.py [path to sync_1175.bin]
-(history: 3.1 sync cmd was 1587, 3.2 sync cmd is 1175; filename kept for now)
+Run: python tools/decode_sync_1587.py [path to sync_515.bin]
+(history: 3.1 sync cmd was 1587, 3.2 was 1175, 3.3 is 515; filename kept for now)
 """
 
 import json
@@ -23,11 +23,11 @@ def load_datamine():
 
 DATAMINE = load_datamine()
 
-# leaf field numbers from datamine.json (3.1: 6/10/13, 3.2: 14/6/2)
+# leaf field numbers from datamine.json (3.1: 6/10/13, 3.2: 14/6/2, 3.3: 9/12/7)
 DISC_UID = DATAMINE["discInfo"]["uid"]
 WEAPON_UID = DATAMINE["weaponInfo"]["uid"]
 AVATAR_ID = DATAMINE["agentInfo"]["id"]
-# top-level sync field numbers (stable 9/15 across 3.1->3.2, read dynamically)
+# top-level sync field numbers (9/15 in 3.1-3.2, 7/3 in 3.3, read dynamically)
 AVATAR_SYNC_NUM = DATAMINE["syncAvatarData"]["avatarSync"]
 ITEM_SYNC_NUM = DATAMINE["syncItemData"]["itemSync"]
 
@@ -74,6 +74,9 @@ def load_descriptors():
     # 3.2 known names
     avatar_msg = avatar_msg or by_name.get("IPFJFJMMLEJ")
     item_msg = item_msg or by_name.get("GANACMDAINO")
+    # 3.3 known names
+    avatar_msg = avatar_msg or by_name.get("LOJFDJHAFPK")
+    item_msg = item_msg or by_name.get("HCKMEEDBEAP")
     if avatar_msg is None or item_msg is None:
         raise KeyError("AvatarSync/ItemSync-like message not found in nap.json")
     print(f"AvatarSync-like: {avatar_msg['name']}, ItemSync-like: {item_msg['name']}", file=sys.stderr)

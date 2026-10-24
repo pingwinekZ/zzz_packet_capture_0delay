@@ -411,11 +411,11 @@ mod tests {
         let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets");
         let data = GameData::load(&assets).expect("committed assets load");
 
-        assert_eq!(data.datamine.cmd_player_sync_sc_notify, 1175);
+        assert_eq!(data.datamine.cmd_player_sync_sc_notify, 515);
         assert!(!data.proto_entries.is_empty());
         assert_eq!(data.nap.entries().len(), data.proto_entries.len());
         assert_eq!(data.seed_for_region("Asia"), Some(0x1A7E_69FE_2F49_590A));
-        assert_eq!(local_version(&assets), Some(Version::parse("3.2")));
+        assert_eq!(local_version(&assets), Some(Version::parse("3.3")));
     }
 
     #[test]

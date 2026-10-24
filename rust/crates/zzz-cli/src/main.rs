@@ -2,8 +2,9 @@
 //!
 //! Everything the tool does is available from here, so a game update can be
 //! investigated without the GUI: capture a session, replay a recorded dump,
-//! export the decoded data, and serve it to the optimizer live over the same
-//! WebSocket the GUI uses. The GUI is a thin shell over the same crates.
+//! probe the protobuf structure of that dump field by field, export the decoded
+//! data, and serve it to the optimizer live over the same WebSocket the GUI
+//! uses. The GUI is a thin shell over the same crates.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -17,7 +18,8 @@ use zzz_capture::{Capture, Dump, Packet, GAME_PORT};
 use zzz_crypto::xorpad::XorPad;
 use zzz_export::{ExportSettings, Izod, NanokaNames};
 use zzz_gamedata::{GameData, HttpFetcher};
-use zzz_scan::{rarity_key, DiscStat, Scanner};
+use zzz_scan::{rarity_key, DecodeEvent, DiscStat, Scanner};
+use zzz_wire::{Message, Value};
 
 /// `WINDIVERT_MTU_MAX`: the biggest packet the driver can hand over.
 const BUFFER_SIZE: usize = 0xFFFF;
@@ -67,6 +69,44 @@ enum Command {
         /// carries the whole inventory, so this is hundreds of lines.
         #[arg(long)]
         discs: bool,
+    },
+    /// Dump the decoded protobuf structure of a recorded dump.
+    ///
+    /// Without `--cmd` this prints a catalogue: every command the capture
+    /// carries, how often it appears, and the field numbers under it. With
+    /// `--cmd` it prints those messages as field trees, values included.
+    ///
+    /// This is the tool a game update is re-derived with. A dismantle request is
+    /// a command carrying one repeated `uint32` list; the sync that follows
+    /// carries the uids that disappeared. Both are visible here, which is how
+    /// `cmdDismantleEquipCsReq`, `equipDismantle` and `deletedEquips` are found
+    /// again when the numbers move.
+    Probe {
+        /// Dump to read, as written by `capture` or by the C++ build.
+        #[arg(long = "in", default_value = "captured_packets.json")]
+        input: PathBuf,
+        /// Directory holding `datamine.json` and `nap.json`.
+        #[arg(long, default_value = "../assets")]
+        assets: PathBuf,
+        /// Region whose `xorSeeds` entry this capture used. Tried and scored if
+        /// omitted, which is almost always what you want.
+        #[arg(long)]
+        region: Option<String>,
+        /// Explicit seed as the hex string `datamine.json` stores (overrides
+        /// `--region`, and skips detection).
+        #[arg(long)]
+        seed: Option<String>,
+        /// Print field trees for these command ids instead of the catalogue.
+        /// Repeatable, so a suspected command and the sync can be read side by
+        /// side.
+        #[arg(long = "cmd")]
+        cmds: Vec<u16>,
+        /// How many messages per command to print with `--cmd`.
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+        /// How deep to expand nested messages.
+        #[arg(long, default_value_t = 6)]
+        depth: u32,
     },
     /// Write the decoded inventory as the optimizer's ZOD JSON.
     Export {
@@ -199,6 +239,23 @@ fn main() -> ExitCode {
             region.as_deref(),
             seed.as_deref(),
             discs,
+        )),
+        Command::Probe {
+            input,
+            assets,
+            region,
+            seed,
+            cmds,
+            limit,
+            depth,
+        } => report(probe(
+            &input,
+            &assets,
+            region.as_deref(),
+            seed.as_deref(),
+            &cmds,
+            limit,
+            depth,
         )),
         Command::Export {
             input,
@@ -739,6 +796,248 @@ fn replay(
     report_inventory(&data, &scanner, list_discs);
     report_export(&data, &scanner);
     Ok(())
+}
+
+/// `zzzcap probe`: the protobuf in this dump, as it actually is.
+///
+/// The catalogue is a map of the capture: one line per command with its
+/// obfuscated name and the field numbers it carries. That is enough to spot the
+/// shapes `datamine.json` is keyed on — a request with one repeated `uint32`
+/// list, a notify whose field is a nested message with an avatar list and a
+/// `uint32` list — without decoding anything by hand.
+fn probe(
+    input: &Path,
+    assets: &Path,
+    region: Option<&str>,
+    seed: Option<&str>,
+    only: &[u16],
+    limit: usize,
+    depth: u32,
+) -> Result<(), String> {
+    let dump = Dump::load(input).map_err(|error| error.to_string())?;
+    if dump.is_empty() {
+        return Err(format!("{}: the dump has no packets", input.display()));
+    }
+    let data = GameData::load(assets).map_err(|error| error.to_string())?;
+    let candidates = candidate_seeds(&data, region, seed)?;
+    let (chosen, detection) = choose_seed(&dump, &data, &candidates);
+    for line in &detection {
+        println!("#{}", line.trim_end());
+    }
+    let Some((label, seed_value)) = chosen else {
+        return Err(
+            "no region seed decrypts this capture: the game may have updated, so the \
+             `xorSeeds` in datamine.json could be stale"
+                .to_string(),
+        );
+    };
+    println!("# {} packets, {label} ({seed_value:016X})", dump.len());
+
+    let mut scanner = Scanner::new(XorPad::for_region(seed_value), &data.datamine, &data.nap);
+    let mut catalogue: BTreeMap<u16, CommandShape> = BTreeMap::new();
+    let mut printed: BTreeMap<u16, usize> = BTreeMap::new();
+    for packet in &dump.packets {
+        for event in scanner.feed(&packet.data, packet.direction(), packet.timestamp) {
+            let DecodeEvent::Message {
+                command_id,
+                message,
+                bytes,
+            } = event
+            else {
+                continue;
+            };
+            catalogue.entry(command_id).or_default().absorb(&message);
+            if only.is_empty() || !only.contains(&command_id) {
+                continue;
+            }
+            let seen = printed.entry(command_id).or_default();
+            if *seen >= limit {
+                continue;
+            }
+            *seen += 1;
+            println!(
+                "\ncmd {command_id} {} ({bytes} bytes, t={})",
+                command_name(&data, command_id),
+                packet.timestamp
+            );
+            print_fields(&message, 1, depth);
+        }
+    }
+
+    println!(
+        "\n# {} messages decoded, {} commands",
+        scanner.stats().decoded,
+        catalogue.len()
+    );
+    if only.is_empty() {
+        println!("# {:<5} {:<7} {:<14} fields", "cmd", "count", "name");
+        for (command_id, shape) in &catalogue {
+            println!(
+                "  {command_id:<5} x{:<6} {:<14} {}",
+                shape.count,
+                command_name(&data, *command_id),
+                shape.describe()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn command_name(data: &GameData, command_id: u16) -> &str {
+    data.nap
+        .entry_by_cmd(command_id)
+        .map_or("?", |entry| entry.name.as_str())
+}
+
+/// One command's field numbers, accumulated over every message that carried it.
+#[derive(Default)]
+struct CommandShape {
+    count: usize,
+    fields: BTreeMap<u32, FieldShape>,
+}
+
+#[derive(Default)]
+struct FieldShape {
+    varint: usize,
+    fixed: usize,
+    nested: usize,
+    packed: usize,
+    raw: usize,
+}
+
+impl CommandShape {
+    fn absorb(&mut self, message: &Message) {
+        self.count += 1;
+        for field in &message.fields {
+            let shape = self.fields.entry(field.number).or_default();
+            match &field.value {
+                Value::Varint(_) | Value::Group(_) => shape.varint += 1,
+                Value::Fixed32(_) | Value::Fixed64(_) => shape.fixed += 1,
+                Value::LengthDelimited(bytes) => {
+                    if Message::decode(bytes).is_ok() {
+                        shape.nested += 1;
+                    } else if packed_varints(bytes).is_some() {
+                        shape.packed += 1;
+                    } else {
+                        shape.raw += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// `#3 message, #8 varint, #15 packed`, one entry per field number.
+    fn describe(&self) -> String {
+        self.fields
+            .iter()
+            .map(|(number, shape)| {
+                let mut kinds = Vec::new();
+                if shape.varint > 0 {
+                    kinds.push("varint");
+                }
+                if shape.fixed > 0 {
+                    kinds.push("fixed");
+                }
+                if shape.nested > 0 {
+                    kinds.push("message");
+                }
+                if shape.packed > 0 {
+                    kinds.push("packed");
+                }
+                if shape.raw > 0 {
+                    kinds.push("bytes");
+                }
+                format!("#{number} {}", kinds.join("/"))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn print_fields(message: &Message, indent: usize, depth: u32) {
+    let pad = "  ".repeat(indent);
+    for field in &message.fields {
+        match &field.value {
+            Value::Varint(value) => println!("{pad}#{} varint={value}", field.number),
+            Value::Fixed32(value) => println!("{pad}#{} fixed32={value:#010X}", field.number),
+            Value::Fixed64(value) => println!("{pad}#{} fixed64={value:#018X}", field.number),
+            Value::Group(fields) => {
+                println!("{pad}#{} group", field.number);
+                print_fields(
+                    &Message {
+                        fields: fields.clone(),
+                    },
+                    indent + 1,
+                    depth.saturating_sub(1),
+                );
+            }
+            Value::LengthDelimited(bytes) => {
+                if depth == 0 {
+                    println!("{pad}#{} len={} (depth limit)", field.number, bytes.len());
+                } else if let Ok(nested) = Message::decode(bytes) {
+                    println!("{pad}#{} len={} message", field.number, bytes.len());
+                    print_fields(&nested, indent + 1, depth - 1);
+                } else if let Some(values) = packed_varints(bytes) {
+                    println!(
+                        "{pad}#{} len={} packed {values:?}",
+                        field.number,
+                        bytes.len()
+                    );
+                } else {
+                    println!(
+                        "{pad}#{} len={} bytes {}",
+                        field.number,
+                        bytes.len(),
+                        hex_preview(bytes)
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The values of a packed varint list, or `None` when the bytes are not exactly
+/// one. `collect_packed_uints` keeps whatever it decoded, which is right for the
+/// parser and wrong for a diagnostic: half a field would read as a uid list.
+fn packed_varints(bytes: &[u8]) -> Option<Vec<u32>> {
+    let mut values = Vec::new();
+    let mut position = 0;
+    while position < bytes.len() {
+        let mut value = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = *bytes.get(position)?;
+            position += 1;
+            value |= u64::from(byte & 0x7F) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+            if shift >= 64 {
+                return None;
+            }
+        }
+        values.push(value as u32);
+    }
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
+}
+
+fn hex_preview(bytes: &[u8]) -> String {
+    let shown = bytes
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if bytes.len() > 16 {
+        format!("{shown} .. ({} bytes)", bytes.len())
+    } else {
+        shown
+    }
 }
 
 /// A dry run of `zzzcap export` with its default settings.
@@ -1706,5 +2005,46 @@ fn describe(error: zzz_capture::CaptureError) -> String {
     match error.hint() {
         Some(hint) => format!("{error}\n       {hint}"),
         None => error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn packed_varints_reads_a_whole_list_and_rejects_a_partial_one() {
+        // 1, 300, 70000, all single-byte-continued varints.
+        let bytes = [0x01, 0xAC, 0x02, 0xF0, 0xA2, 0x04];
+        assert_eq!(packed_varints(&bytes), Some(vec![1, 300, 70_000]));
+
+        // A continuation bit with nothing after it is not a list.
+        assert_eq!(packed_varints(&[0xAC]), None);
+        assert_eq!(packed_varints(&[]), None);
+    }
+
+    #[test]
+    fn a_command_shape_names_every_field_number_it_saw() {
+        let mut shape = CommandShape::default();
+        let message = Message {
+            fields: vec![
+                zzz_wire::Field::new(15, Value::LengthDelimited(vec![1, 2, 3])),
+                zzz_wire::Field::new(7, Value::Varint(9)),
+                zzz_wire::Field::new(3, Value::LengthDelimited(vec![0x08, 0x01])),
+            ],
+        };
+        shape.absorb(&message);
+        assert_eq!(shape.count, 1);
+        assert_eq!(shape.describe(), "#3 message, #7 varint, #15 packed");
+    }
+
+    #[test]
+    fn hex_preview_stops_at_sixteen_bytes() {
+        assert_eq!(hex_preview(&[0x0A, 0xFF]), "0A FF");
+        let long: Vec<u8> = (0..20).collect();
+        assert_eq!(
+            hex_preview(&long),
+            "00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F .. (20 bytes)"
+        );
     }
 }

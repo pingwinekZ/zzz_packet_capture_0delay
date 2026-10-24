@@ -18,7 +18,7 @@ original code rather than by re-deriving what it ought to print.
 | `zzz-live` | `src/websocket/websocketServer.hpp` | The WebSocket server the optimizer pulls the inventory from. No asio, no OpenSSL: `std::net` plus threads, and a hand-rolled SHA-1. |
 | `zzz-session` | `src/ui/home.cpp` (the pipeline part) | The live decode-and-serve pipeline — region detection, scanning, snapshots, the change log — shared by the CLI and the GUI so the two cannot drift. |
 | `zzz-gui` | `src/ui/*` | The window: capture controls, the sync toggles, live export, and a **console** that logs every item-level change (equips, dismantles, new pulls) with real names. |
-| `zzz-cli` | `main.cpp`, `tools/*` | `zzzcap capture` / `replay` / `export` / `live` / `update`. |
+| `zzz-cli` | `main.cpp`, `tools/*` | `zzzcap capture` / `replay` / `probe` / `export` / `live` / `update`. |
 
 Planned but not written yet: the `query_dispatch` region lookup
 (`src/dispatch/dispatch.hpp`) that would let the seeds refresh themselves.
@@ -102,6 +102,53 @@ the top, and 64 carry a stale `ts`. Those late duplicates are dropped by the rea
 `diff < 0` check — the same policy as the C++ — which is why the capture decodes
 cleanly: 561 messages reassembled, 395 decoded, 0 gaps skipped, 0 backlog
 overflows.
+
+## Probing the protobuf
+
+```bash
+cargo run -p zzz-cli -- probe --in captured_packets.json
+```
+
+`probe` is the tool a game update is re-derived with, and it is why the numbers in
+`datamine.json` are data rather than code. Without arguments it prints a
+catalogue: every command in the capture, how often it appears, its obfuscated
+`nap.json` name, and the field numbers under it, tagged by wire shape
+(`varint`, `message`, `packed`, `bytes`).
+
+That catalogue is enough to recognise the shapes the datamine keys on. A
+dismantle request is a command carrying one `packed` `uint32` list; a sync
+notify is a command whose field is a `message` that itself holds a `message`
+list and a `packed` list. `--cmd` prints those messages as field trees with
+values and the packet timestamp, so a uid that just disappeared from the
+inventory can be found in the sync that followed it:
+
+```bash
+cargo run -p zzz-cli -- probe --in captured_packets.json --cmd 515 --cmd 1401 --limit 2
+```
+
+`--depth` stops runaway nesting and `--limit` caps how many messages per command
+are printed; the catalogue is unaffected by both.
+
+The numbers this has produced so far, which is the history a future update
+starts from:
+
+| key | 3.1 | 3.2 | 3.3 |
+| --- | --- | --- | --- |
+| `cmdPlayerSyncScNotify` | 1587 | 1175 | 515 |
+| `syncAvatarData.avatarSync` | 9 | 9 | 7 |
+| `syncAvatarData.avatars` | 12 | 13 | 14 |
+| `syncAvatarData.dels` | 14 | 4 | 2 |
+| `syncItemData.itemSync` | 15 | 15 | 3 |
+| `syncItemData.equips` | 15 | 12 | 6 |
+| `syncItemData.weapons` | 1 | 3 | 4 |
+| `syncItemData.deletedEquips` | 10 | 8 | 13 |
+| `cmdDismantleEquipCsReq` | 5185 | 4977 | 2334 |
+| `equipDismantle.uid`/`uids` | 2 | 15 | 10 |
+
+Only `deletedEquips` and the dismantle pair need a capture that actually
+dismantles a disc: the request carries the uid, and the sync that follows carries
+it again in the field that deletes it. Everything else falls out of the login
+alone.
 
 ## The inventory
 
@@ -397,6 +444,7 @@ cargo fmt --check
 ```bash
 cargo run -p zzz-cli -- capture --seconds 180
 cargo run -p zzz-cli -- replay  --in login_capture.json
+cargo run -p zzz-cli -- probe   --in login_capture.json
 cargo run -p zzz-cli -- export  --in login_capture.json --out zod.json
 cargo run -p zzz-cli -- live    --in login_capture.json
 cargo run -p zzz-cli -- update
