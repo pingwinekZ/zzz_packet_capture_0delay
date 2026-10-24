@@ -67,6 +67,8 @@ pub struct DiscInfoFields {
     pub main_stat: u32,
     #[serde(rename = "subStats")]
     pub sub_stats: u32,
+    pub lock: u32,
+    pub trash: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -185,6 +187,8 @@ mod tests {
         assert_eq!(datamine.sync_item_data.deleted_equips, 13);
         assert_eq!(datamine.agent_info.weapon_uid, 8);
         assert_eq!(datamine.disc_stat.add_value, 6);
+        assert_eq!(datamine.disc_info.lock, 12);
+        assert_eq!(datamine.disc_info.trash, 5);
         assert_eq!(datamine.xor_seeds.len(), 4);
     }
 

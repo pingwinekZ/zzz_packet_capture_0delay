@@ -565,8 +565,8 @@ fn disc_export(
         rarity: rarity_letter.to_string(),
         main_stat_key: main_stat_key.to_string(),
         location: owners.get(&disc.uid).cloned().unwrap_or_default(),
-        lock: false,
-        trash: false,
+        lock: disc.lock,
+        trash: disc.trash,
         substats,
     })
 }
@@ -704,6 +704,7 @@ mod tests {
                         add_value: 1,
                     },
                 ],
+                ..DiscInfo::default()
             }],
         };
 
@@ -848,6 +849,7 @@ mod tests {
                 ..DiscStat::default()
             },
             sub_stats: subs,
+            ..DiscInfo::default()
         };
         let stat = |key: u32, add: u32| DiscStat {
             key,
@@ -1091,6 +1093,34 @@ mod tests {
         let discs = zod.discs.unwrap();
         assert_eq!(discs[0].location, "Anby");
         assert_eq!(discs[1].location, "", "never dressed, so nowhere to be");
+    }
+
+    #[test]
+    fn the_lock_and_discard_flags_reach_the_export() {
+        let names = reference_names();
+        let inventory = Inventory {
+            discs: vec![DiscInfo {
+                uid: 1,
+                id: 31341,
+                main_stat: DiscStat {
+                    key: 11103,
+                    ..DiscStat::default()
+                },
+                lock: true,
+                trash: true,
+                ..DiscInfo::default()
+            }],
+            ..Inventory::default()
+        };
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let disc = &zod.discs.as_ref().unwrap()[0];
+        assert!(disc.lock);
+        assert!(disc.trash);
+
+        // And the writer, not just the struct: the site reads these two keys.
+        let json = zod.to_json();
+        assert!(json.contains(r#""lock":true"#), "{json}");
+        assert!(json.contains(r#""trash":true"#), "{json}");
     }
 
     #[test]

@@ -93,6 +93,12 @@ fn varint_field(message: &Message, number: u32) -> u32 {
     last_varint(message, number).unwrap_or(0) as u32
 }
 
+/// A `bool` field, defaulting to false. Proto3 omits a false bool on the wire,
+/// so an absent field is the same as an explicit zero.
+fn bool_field(message: &Message, number: u32) -> bool {
+    last_varint(message, number).is_some_and(|value| value != 0)
+}
+
 /// A nested message field.
 ///
 /// `None` means the wire type was not length-delimited (the original would read
@@ -139,6 +145,10 @@ pub struct DiscInfo {
     pub level: u32,
     pub main_stat: DiscStat,
     pub sub_stats: Vec<DiscStat>,
+    /// The padlock in the bag.
+    pub lock: bool,
+    /// Marked for discard (the trash can).
+    pub trash: bool,
 }
 
 impl DiscInfo {
@@ -176,6 +186,10 @@ impl DiscInfo {
                     disc.sub_stats
                         .push(DiscStat::from_message(&nested, datamine));
                 }
+            } else if field.number == datamine.disc_info.lock {
+                disc.lock = bool_field(message, field.number);
+            } else if field.number == datamine.disc_info.trash {
+                disc.trash = bool_field(message, field.number);
             }
         }
         disc
@@ -399,6 +413,33 @@ mod tests {
         };
         assert_eq!(unknown.stat_name(), None);
         assert!(!unknown.is_percentage());
+    }
+
+    #[test]
+    fn parses_the_lock_and_discard_flags_of_a_disc() {
+        let datamine = datamine();
+        let message = Message {
+            fields: vec![
+                Field::new(datamine.disc_info.uid, Value::Varint(16388)),
+                Field::new(datamine.disc_info.lock, Value::Varint(1)),
+                Field::new(datamine.disc_info.trash, Value::Varint(1)),
+            ],
+        };
+        let disc = DiscInfo::from_message(&message, &datamine);
+        assert!(disc.lock, "the padlock arrived as field 12");
+        assert!(disc.trash, "the discard mark arrived as field 5");
+
+        // Proto3 omits a false bool, so an absent field must not be mistaken for
+        // "unknown"; an explicit zero is false as well.
+        let unlocked = Message {
+            fields: vec![
+                Field::new(datamine.disc_info.uid, Value::Varint(16388)),
+                Field::new(datamine.disc_info.lock, Value::Varint(0)),
+            ],
+        };
+        let disc = DiscInfo::from_message(&unlocked, &datamine);
+        assert!(!disc.lock);
+        assert!(!disc.trash);
     }
 
     #[test]

@@ -144,11 +144,20 @@ starts from:
 | `syncItemData.deletedEquips` | 10 | 8 | 13 |
 | `cmdDismantleEquipCsReq` | 5185 | 4977 | 2334 |
 | `equipDismantle.uid`/`uids` | 2 | 15 | 10 |
+| `discInfo.lock` | — | — | 12 |
+| `discInfo.trash` | — | — | 5 |
 
 Only `deletedEquips` and the dismantle pair need a capture that actually
 dismantles a disc: the request carries the uid, and the sync that follows carries
 it again in the field that deletes it. Everything else falls out of the login
 alone.
+
+The disc flags were found the same way, by toggling rather than by guessing:
+marking a disc for discard sends the sync with `#5 varint=1`, unmarking sends it
+without, and locking/unlocking does the same through `#12`. Both are proto3
+bools, so a missing field is `false`; `nap.json` confirms they are the disc's
+only bools with those numbers (plus `#11`, which is a separate marker). They
+were not captured or exported before 3.3 — the export wrote `false` for both.
 
 ## The inventory
 
@@ -205,6 +214,13 @@ That writes the ZOD JSON the optimizer imports: 48 agents, 1393 discs and 342
 w-engines for the recorded login. `--out -` (the default) writes the JSON to
 stdout and the report to stderr, so a redirect gives you a clean file — and the
 same bytes as `--out`, which is why `print!` is used rather than `println!`.
+
+Each disc's `lock` and `trash` are the game's own padlock and trash-can marks,
+read from the disc record (`discInfo.lock` 12, `discInfo.trash` 5) rather than
+written as `false`. They are proto3 bools, so an absent field means false, and a
+toggle arrives as an ordinary sync — which is also why the live export refreshes
+when one is flipped. The numbers were found by marking a disc for discard and
+then locking it in a capture, not by guessing between the disc's bool fields.
 
 The floors are the reference's defaults, and they are worth reading before you
 change them: `--min-agent-rarity 4` (the game's three-star agents are left out),

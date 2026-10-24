@@ -54,7 +54,9 @@
         "id": 1,
         "level": 14,
         "mainStat": 4,
-        "subStats": 8
+        "subStats": 8,
+        "lock": 12,
+        "trash": 5
     },
     "discStat": {
         "key": 15,

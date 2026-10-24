@@ -937,6 +937,43 @@ mod tests {
     }
 
     #[test]
+    fn a_sync_that_only_toggles_lock_or_trash_still_upserts_the_disc() {
+        let datamine = datamine();
+        let mut inventory = Inventory::new();
+        inventory.upsert_disc(DiscInfo {
+            uid: 16388,
+            id: 34241,
+            ..DiscInfo::default()
+        });
+
+        // A lock or discard toggle arrives as the same full disc message with
+        // the bool set; everything else is unchanged.
+        let toggled = Message {
+            fields: vec![
+                Field::new(datamine.disc_info.uid, Value::Varint(16388)),
+                Field::new(datamine.disc_info.id, Value::Varint(34241)),
+                Field::new(datamine.disc_info.lock, Value::Varint(1)),
+                Field::new(datamine.disc_info.trash, Value::Varint(1)),
+            ],
+        }
+        .encode();
+
+        let message = player_sync(&[toggled], &[], &[], &[], &[]);
+        let mut events = Vec::new();
+        let mut changes = Vec::new();
+        let result = inventory.apply_player_sync(&message, &datamine, &mut events, &mut changes);
+
+        assert_eq!(result.upserts, 1);
+        assert_eq!(inventory.discs.len(), 1);
+        assert!(inventory.discs[0].lock);
+        assert!(inventory.discs[0].trash);
+        assert!(matches!(
+            changes.as_slice(),
+            [ItemChange::DiscUpdated { uid: 16388, .. }]
+        ));
+    }
+
+    #[test]
     fn a_player_sync_deletes_discs_and_agents() {
         let datamine = datamine();
         let mut inventory = Inventory::new();

@@ -6,6 +6,7 @@ It can be used to quickly import all your data into [Zenless Optimizer](https://
 Features of the fork are:
 - Continuous capture - you don't need to relaunch the game to capture again, changes in game like new disc or upgraded disc are captured so the export data is always fresh.
 - Live Export - capture result continuously flowing into the optimizer, so what you see on website matches your in-game data.
+- Disc lock and discard status are captured too, so the padlock and trash marks in-game survive the export.
 
 Supports game version **3.3** (`OSPRODWin3.3.0`). The field numbers live in `assets/datamine.json`, so a game update is a data change; `zzzcap probe` is the tool that re-derives them from a capture.
 

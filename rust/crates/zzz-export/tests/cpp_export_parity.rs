@@ -177,6 +177,7 @@ fn edge_inventory() -> Inventory {
         // `hp` for the main stat, so the name lookup is exercised too.
         main_stat: stat(11103, 550, 0),
         sub_stats: subs,
+        ..DiscInfo::default()
     };
 
     Inventory {
@@ -388,6 +389,7 @@ fn the_recorded_capture_exports_the_reference_bytes() {
                         .as_array()
                         .map(|subs| subs.iter().map(stat).collect())
                         .unwrap_or_default(),
+                    ..DiscInfo::default()
                 })
                 .collect(),
             engines: list("engines")
