@@ -2,9 +2,9 @@
 //!
 //! WinDivert's network layer hands over an IP packet with no link-layer header,
 //! so this is all the dissecting we need: find the UDP header, check the port, and
-//! slice out the payload. Everything here is pure and unit tested against
-//! hand-built packets, because on a live capture we only get one shot at getting
-//! it right.
+//! slice out the payload. libpcap frames are stripped by [`crate::link`] first.
+//! Everything here is pure and unit tested against hand-built packets, because
+//! on a live capture we only get one shot at getting it right.
 
 /// A parsed UDP datagram.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

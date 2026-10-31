@@ -12,7 +12,7 @@ original code rather than by re-deriving what it ought to print.
 | `zzz-crypto` | `src/crypto/*` | RSA, EC2B, XOR pads, .NET `Random`. No I/O, no internal deps. |
 | `zzz-wire` | `src/kcp/*`, protobuf `UnknownFieldSet` usage, `crypto::xorProtoFields` | KCP reassembly, generic protobuf wire reader/writer, field-number XOR, protonap. |
 | `zzz-gamedata` | `datamine.hpp`, `manifest.hpp`, `nanokaData.hpp`, `serialization/proto.hpp` | Where the parser gets its field numbers and display names. The only crate that talks to the network. |
-| `zzz-capture` | `src/pcap/*` (capture half) + PcapPlusPlus | WinDivert through hand-rolled FFI, IP/UDP parsing, the recorded-dump format. |
+| `zzz-capture` | `src/pcap/*` (capture half) + PcapPlusPlus | WinDivert on Windows and libpcap on Linux, link-layer + IP/UDP parsing, the recorded-dump format. |
 | `zzz-scan` | `src/crypto/session.hpp`, `src/data/*`, `src/pcap/sync.hpp` | Session handshake, per-message decrypt, the disc/w-engine/agent model, and the sync applier. |
 | `zzz-export` | `src/serialization/zod/*` | The ZOD JSON an optimizer imports, and the only JSON writer in the tree that does not go through `serde_json` (see below). |
 | `zzz-live` | `src/websocket/websocketServer.hpp` | The WebSocket server the optimizer pulls the inventory from. No asio, no OpenSSL: `std::net` plus threads, and a hand-rolled SHA-1. |
@@ -23,9 +23,10 @@ original code rather than by re-deriving what it ought to print.
 Planned but not written yet: the `query_dispatch` region lookup
 (`src/dispatch/dispatch.hpp`) that would let the seeds refresh themselves.
 
-Rust compiles with the MSVC toolchain alone — no CMake, Ninja, vcpkg, Vulkan SDK
-or OpenSSL. `cargo test` is currently 185 tests and takes seconds. (The GUI
-adds `eframe`; nothing else pulls new crates.)
+Rust compiles without CMake, Ninja, vcpkg, Vulkan SDK or OpenSSL. Windows uses
+the MSVC toolchain and needs no system library; Linux needs the libpcap headers
+(`libpcap-dev`) for live capture. The test suite runs in seconds. (The GUI adds
+`eframe`; nothing else pulls new crates.)
 
 `assets/` is still the repository-root one — the crates embed it with
 `include_bytes!` so there is a single source of truth for `manifest.json`,
@@ -39,7 +40,9 @@ little-endian (`util::to<T>` is a raw unaligned read) use explicit
 `from_le_bytes`/`to_le_bytes` here, which is equivalent on x86_64 and also
 correct on a big-endian host.
 
-## Live capture on Windows
+## Live capture
+
+### Windows
 
 The Windows backend loads `WinDivert.dll` dynamically, so the only build-time
 requirement is that the DLL and its driver sit next to the executable. The build
@@ -66,6 +69,38 @@ cd rust
 cargo run -p zzz-cli -- capture --seconds 180
 ```
 
+### Linux
+
+The Linux backend uses libpcap through the `pcap` crate. Install the headers to
+build and the runtime to run:
+
+```bash
+sudo apt install libpcap-dev libpcap0.8   # Debian/Ubuntu
+# Fedora: sudo dnf install libpcap-devel libpcap
+# Arch:   sudo pacman -S libpcap
+```
+
+Capturing needs raw-socket access. Either run as root, or build and grant the
+capability to the binary (it is lost when the binary is rebuilt):
+
+```bash
+cargo build --release -p zzz-cli -p zzz-gui
+sudo setcap cap_net_raw,cap_net_admin=eip target/release/zzzcap
+sudo setcap cap_net_raw,cap_net_admin=eip target/release/zzzgui
+target/release/zzzcap capture --seconds 180
+```
+
+The default device is libpcap's `any`, which captures every interface. Set
+`ZZZ_CAPTURE_DEVICE=eth0` (or another device name) to pin one. libpcap hands
+over link-layer frames, so `zzz-capture/src/link.rs` strips Ethernet (including
+VLAN tags), Linux SLL/SLL2, BSD loopback and raw-IP headers before the IP/UDP
+parser runs.
+
+The release archive bundles `libpcap.so.0.8` and links it with an
+`$ORIGIN/lib` rpath: Debian/Ubuntu and Fedora/Arch ship incompatible SONAMEs
+(`libpcap.so.0.8` vs `libpcap.so.1`), so a plain system link would only run on
+one distribution family. A local build links the system libpcap instead.
+
 ## Decoding a capture
 
 ```bash
@@ -82,10 +117,12 @@ detection; `--assets` points at a different data directory.
 Two facts about direction, because getting them wrong costs a debugging session:
 
 * Direction comes from the UDP port — `dst == 20501` means outgoing — exactly as
-  `Pcap::processRawPacket` decides it. WinDivert's address also carries it, in the
-  32-bit bitfield word that starts at byte 8: `Layer:8`, `Event:8`, `Sniffed:1`,
-  `Outbound:1`, so `Outbound` is byte 10 mask `0x02`. Byte 11 is `Reserved1` and
-  always reads zero, so reading it there labels every packet incoming.
+  `Pcap::processRawPacket` decides it. On Windows WinDivert's address also
+  carries it, in the 32-bit bitfield word that starts at byte 8: `Layer:8`,
+  `Event:8`, `Sniffed:1`, `Outbound:1`, so `Outbound` is byte 10 mask `0x02`.
+  Byte 11 is `Reserved1` and always reads zero, so reading it there labels every
+  packet incoming. Linux libpcap reports no per-packet direction, so the port is
+  the only signal there.
 * That failure is silent — two KCP streams filed under one label just look like a
   noisy capture, so `replay` classifies the backwards steps it sees. Sequence
   numbers climb by one within a direction, and a dip means one of two things:
@@ -445,7 +482,10 @@ change log is a ring buffer, so an all-night session cannot grow it without
 bound.
 
 `zzz-gui` runs the same `zzz-session` pipeline `zzzcap live` runs, so the two
-cannot disagree about what was captured.
+cannot disagree about what was captured. On Linux it uses X11 or Wayland and
+needs the usual GL/desktop runtime; the release workflow installs the build
+dependencies (`libxkbcommon-dev`, `libwayland-dev`, `libx11-dev`,
+`libgl1-mesa-dev`).
 
 ## Commands
 

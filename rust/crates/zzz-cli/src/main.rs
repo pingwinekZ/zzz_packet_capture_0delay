@@ -21,7 +21,8 @@ use zzz_gamedata::{GameData, HttpFetcher};
 use zzz_scan::{rarity_key, DecodeEvent, DiscStat, Scanner};
 use zzz_wire::{Message, Value};
 
-/// `WINDIVERT_MTU_MAX`: the biggest packet the driver can hand over.
+/// The biggest packet either backend can hand over (`WINDIVERT_MTU_MAX`, and
+/// also libpcap's 16-bit snaplen).
 const BUFFER_SIZE: usize = 0xFFFF;
 /// How often the dump is written while capturing, so an interrupt still leaves a
 /// usable file.
@@ -171,7 +172,8 @@ enum Command {
         assets: PathBuf,
         /// Stream this recorded dump instead of capturing from the game. It is
         /// fed as fast as it reads, so this is how the server is exercised
-        /// without the game running — and on a non-Windows host, the only way.
+        /// without the game running — and on a host without live capture, the
+        /// only way.
         #[arg(long = "in")]
         input: Option<PathBuf>,
         /// Region whose `xorSeeds` entry the traffic uses. Tried and scored if
@@ -410,12 +412,11 @@ fn report(result: Result<(), String>) -> ExitCode {
     }
 }
 
-#[cfg(windows)]
 fn capture(port: u16, out: &Path, seconds: u64) -> Result<(), String> {
     let capture = Capture::open(port).map_err(describe)?;
 
     println!("Listening for UDP port {port}");
-    println!("  driver filter: {}", Capture::port_filter(port));
+    println!("  filter:        {}", Capture::port_filter(port));
     println!("  writing to:    {}", out.display());
     if seconds > 0 {
         println!("  auto-stop:     {seconds}s");
@@ -499,7 +500,7 @@ fn capture(port: u16, out: &Path, seconds: u64) -> Result<(), String> {
     }
     if capture.direction_conflicts() > 0 {
         println!(
-            "  caution:  {} packets where the port and WinDivert's address disagreed about direction",
+            "  caution:  {} packets where the port and the capture backend disagreed about direction",
             capture.direction_conflicts()
         );
     }
@@ -513,11 +514,6 @@ fn capture(port: u16, out: &Path, seconds: u64) -> Result<(), String> {
         Some(message) => Err(message),
         None => Ok(()),
     }
-}
-
-#[cfg(not(windows))]
-fn capture(_port: u16, _out: &Path, _seconds: u64) -> Result<(), String> {
-    Err("live capture is only implemented for Windows so far".into())
 }
 
 /// A quick "what am I looking at?" pass over a dump.
@@ -1542,7 +1538,6 @@ fn extractions(scanner: &Scanner<'_>) -> u64 {
     extraction_total(scanner.extract())
 }
 
-#[cfg(windows)]
 fn stream_device(session: &mut Live<'_>, port: u16, seconds: u64) -> Result<(), String> {
     let capture = Capture::open(port).map_err(describe)?;
     println!("  filter:      {}", Capture::port_filter(port));
@@ -1558,7 +1553,7 @@ fn stream_device(session: &mut Live<'_>, port: u16, seconds: u64) -> Result<(), 
             Ok(Some(packet)) => {
                 // A refusal from the pipeline — no region, or a record the data
                 // files cannot name — ends the session: there is nothing useful to
-                // serve until it is dealt with, and the driver has to be released
+                // serve until it is dealt with, and the capture has to be released
                 // so the reason is not buried under packet noise.
                 if let Err(error) = session.packet(&packet) {
                     failure = Some(error);
@@ -1583,15 +1578,6 @@ fn stream_device(session: &mut Live<'_>, port: u16, seconds: u64) -> Result<(), 
         Some(message) => Err(message),
         None => Ok(()),
     }
-}
-
-#[cfg(not(windows))]
-fn stream_device(_session: &mut Live<'_>, _port: u16, _seconds: u64) -> Result<(), String> {
-    Err(
-        "live capture is only implemented for Windows so far; serve a recorded \
-         capture with --in <dump> instead"
-            .into(),
-    )
 }
 
 /// Region name and seed pairs to try, most specific first.
@@ -2000,7 +1986,6 @@ fn clone_state(state: &Arc<Mutex<Dump>>) -> Dump {
     lock(state).clone()
 }
 
-#[cfg(windows)]
 fn describe(error: zzz_capture::CaptureError) -> String {
     match error.hint() {
         Some(hint) => format!("{error}\n       {hint}"),

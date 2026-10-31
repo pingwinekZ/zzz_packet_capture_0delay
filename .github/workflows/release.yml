@@ -1,11 +1,15 @@
-# Builds the Windows release and publishes it.
+# Builds the Windows and Linux releases and publishes them.
 #
 # Push a tag like `v0.1.0` to build and publish a GitHub release with the
-# ready-to-run zip. "Run workflow" builds the same zip without publishing,
-# as a downloadable artifact — useful for a pre-tag check.
+# ready-to-run archives. "Run workflow" builds the same archives without
+# publishing, as downloadable artifacts — useful for a pre-tag check.
 #
-# Only Windows is built: live capture needs WinDivert, and the GUI targets
-# the optimizer running on the same machine.
+# Windows live capture needs WinDivert, which is fetched and staged next to the
+# executables. Linux live capture uses libpcap: the job installs its headers to
+# build and bundles the shared library next to the binaries, because Debian and
+# Ubuntu call it libpcap.so.0.8 while Fedora and Arch call it libpcap.so.1. The
+# Linux job runs on 22.04 rather than `-latest` so the binaries only require
+# glibc 2.35 and run on current stable distros.
 
 name: release
 
@@ -25,7 +29,7 @@ env:
   WINDIVERT_SHA512: 92eb2ef98ced175d44de1cdb7c52f2ebc534b6a997926baeb83bfe94cba9287b438f796aff11f6163918bcdbc25bcd4e3383715f139f690d207ce219f846a345
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     defaults:
       run:
@@ -84,9 +88,85 @@ jobs:
           name: zzz-packet-capture-win64
           path: dist/zzz-packet-capture-win64.zip
 
+  build-linux:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcap-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libgl1-mesa-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check and test
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --all-targets
+          cargo test --workspace
+        working-directory: rust
+
+      - name: Build release
+        # Bundle libpcap and resolve it relative to the executable: Debian and
+        # Ubuntu name the library libpcap.so.0.8 while Fedora and Arch use
+        # libpcap.so.1, so a plain dynamic link would only run on one family.
+        env:
+          RUSTFLAGS: '-C link-arg=-Wl,-rpath,$ORIGIN/lib'
+        run: cargo build --release -p zzz-cli -p zzz-gui
+        working-directory: rust
+
+      - name: Stage package
+        run: |
+          mkdir -p dist-linux/assets dist-linux/lib
+          cp rust/target/release/zzzcap rust/target/release/zzzgui dist-linux/
+          cp /usr/lib/x86_64-linux-gnu/libpcap.so.0.8 dist-linux/lib/
+          # libpcap is BSD-3-Clause; ship its notice with the copy.
+          cp /usr/share/doc/libpcap0.8/copyright dist-linux/lib/libpcap.COPYRIGHT
+          cp assets/datamine.json assets/nap.json assets/manifest.json dist-linux/assets/
+          # The name cache is fetched on first start when absent; ship it when
+          # present so a fresh install works fully offline.
+          if [ -f assets/nanokaData.json ]; then cp assets/nanokaData.json dist-linux/assets/; fi
+          # Prove the bundled library is what the loader finds, without root.
+          readelf -d dist-linux/zzzcap | grep -E '(RPATH|RUNPATH).*\$ORIGIN/lib'
+          ldd dist-linux/zzzcap | grep 'libpcap.so.0.8 => .*dist-linux/lib'
+          dist-linux/zzzcap --help > /dev/null
+          mkdir -p dist
+          tar -C dist-linux -czf dist/zzz-packet-capture-linux-x86_64.tar.gz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zzz-packet-capture-linux-x86_64
+          path: dist/zzz-packet-capture-linux-x86_64.tar.gz
+
+  publish:
+    needs: [build-windows, build-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zzz-packet-capture-*
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/zzz-packet-capture-win64.zip
+          files: |
+            dist/zzz-packet-capture-win64.zip
+            dist/zzz-packet-capture-linux-x86_64.tar.gz
           generate_release_notes: true

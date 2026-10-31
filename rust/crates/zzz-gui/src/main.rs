@@ -328,8 +328,8 @@ impl App {
             Err(error) => {
                 // Keep the log channel so the reason stays visible in the
                 // console instead of vanishing with the receiver. Known causes
-                // (no admin rights, missing driver) get their hint appended,
-                // like the CLI does.
+                // (no admin/raw-socket rights, missing driver or libpcap) get
+                // their hint appended, like the CLI does.
                 let message = match error.hint() {
                     Some(hint) => format!("capture: {error}\n  {hint}"),
                     None => format!("capture: {error}"),
