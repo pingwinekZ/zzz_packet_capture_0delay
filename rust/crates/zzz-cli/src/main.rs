@@ -1227,7 +1227,7 @@ struct LiveOptions<'a> {
 ///
 /// The port and the payload are the reference's: the server comes from
 /// `websocketServer.hpp`, and each snapshot is `makeLiveZodJson` — see
-/// [`Izod::for_live`] for the two rules that make a live payload different from a
+/// [`Izod::for_live`] for the rule that makes a live payload different from a
 /// written one.
 fn live(options: LiveOptions<'_>) -> Result<(), String> {
     let LiveOptions {

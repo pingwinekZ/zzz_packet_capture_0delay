@@ -431,15 +431,17 @@ It listens on `127.0.0.1:23313` and accepts any path, so the optimizer's
 whenever the capture changes the inventory, and a client that connects in between
 is given the last one.
 
-Three rules decide what a live payload may contain, and all three follow from the
-optimizer importing with replace semantics — what the payload says is what the
-account becomes:
+The optimizer imports with replace semantics, so what the payload says is what
+the account becomes, and that shapes how a live payload is built:
 
-* **The floors are ignored.** `--min-disc-level` and its siblings are zeroed for a
-  live payload however they were passed: a floor would delete every record below
-  it from the site on the next snapshot. `--no-agents` / `--no-discs` /
-  `--no-engines` still apply, because that is how the user says "stop syncing
-  this".
+* **The floors apply.** The payload is filtered exactly like a file export, in
+  `zzzcap live` and in the GUI. A floor therefore deletes the records below it
+  from the site on the next snapshot that still has records in that category; a
+  category the floors empty out is absent (see the next rule), so the site keeps
+  its old records then. The defaults filter nothing on current data (all agents
+  are four or five stars, all w-engines three stars or more, all discs B or
+  better). `--no-agents` / `--no-discs` / `--no-engines` are a different thing:
+  they make the whole category absent, which leaves the site's records alone.
 * **An empty category is absent, never `[]`.** An empty list means "everything was
   deleted"; an absent one means "nothing to say", which the site leaves alone.
   This is the state at the start of a session, before the load responses land.

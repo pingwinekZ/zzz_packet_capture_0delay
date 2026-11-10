@@ -311,19 +311,21 @@ impl Izod {
 
     /// The payload a *live* client receives: `Home::State::makeLiveZodJson`.
     ///
-    /// Two rules separate this from the file export, and both follow from the
-    /// optimizer's import being replace-semantics per category — whatever the
-    /// payload says is what the account becomes:
+    /// The settings apply as they do for a file export, floors included, and
+    /// callers pass the same settings their file export uses. One rule separates
+    /// this from the file export, and it follows from the optimizer's import
+    /// being replace-semantics per category: whatever the payload says is what
+    /// the account becomes.
     ///
-    /// * **The floors are ignored.** `minDiscRarity` and its five siblings are
-    ///   zeroed here even when the caller sets them, because a floor would delete
-    ///   every record below it from the site's database on the next snapshot. The
-    ///   category toggles are still honoured: they are how the user says "stop
-    ///   syncing w-engines".
     /// * **An empty category is `null`, never `[]`.** An empty list means
     ///   "everything was deleted"; an absent one means "nothing to say", which
     ///   the site leaves alone. This is the state at the start of a session,
-    ///   before the load responses have arrived.
+    ///   before the load responses have arrived, and also the state of a
+    ///   category that the floors or the category toggles empty out.
+    ///
+    /// Because of the same replace semantics, a floor removes every record below
+    /// it from the site's database on the next snapshot that still has records
+    /// in that category.
     ///
     /// Note that this makes the payload depend on what the capture has seen so
     /// far, not on what the account owns: a category the game has not sent yet is
@@ -333,16 +335,7 @@ impl Izod {
         names: &dyn Names,
         settings: &ExportSettings,
     ) -> Result<Self, ExportError> {
-        let settings = ExportSettings {
-            min_disc_rarity: 0,
-            min_disc_level: 0,
-            min_engine_rarity: 0,
-            min_engine_level: 0,
-            min_agent_rarity: 0,
-            min_agent_level: 0,
-            ..*settings
-        };
-        let mut zod = Self::from_inventory(inventory, names, &settings)?;
+        let mut zod = Self::from_inventory(inventory, names, settings)?;
         null_if_empty(&mut zod.characters);
         null_if_empty(&mut zod.discs);
         null_if_empty(&mut zod.wengines);
@@ -1283,9 +1276,7 @@ mod tests {
     }
 
     #[test]
-    fn the_live_payload_ignores_the_floors() {
-        // A snapshot that applied a floor would delete every record below it from
-        // the site, so the floors are zeroed however they were set.
+    fn the_live_payload_applies_the_floors() {
         let names = reference_names();
         let inventory = Inventory {
             agents: vec![AgentInfo {
@@ -1323,13 +1314,17 @@ mod tests {
         let file = Izod::from_inventory(&inventory, &names, &floors).unwrap();
         assert!(file.characters.as_ref().unwrap().is_empty());
         assert!(file.discs.as_ref().unwrap().is_empty());
-        // ...and the live payload keeps them.
+        // ...and so does the live payload, whose emptied categories are null.
         let live = Izod::for_live(&inventory, &names, &floors).unwrap();
+        assert!(live.characters.is_none());
+        assert!(live.discs.is_none());
+        assert!(live.wengines.is_none());
+        assert!(!live.to_json().contains("characters"));
+
+        let live = Izod::for_live(&inventory, &names, &ExportSettings::default()).unwrap();
         assert_eq!(live.characters.as_ref().unwrap().len(), 1);
         assert_eq!(live.discs.as_ref().unwrap().len(), 1);
-        // A category the capture has nothing for is null rather than empty.
         assert!(live.wengines.is_none());
-        assert!(!live.to_json().contains("wengines"));
     }
 
     #[test]

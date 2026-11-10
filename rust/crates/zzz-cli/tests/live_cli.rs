@@ -182,8 +182,8 @@ fn the_recorded_login_is_served_as_a_zod_snapshot() {
     );
 
     // The region is detected from the capture, so the payload arrives without any
-    // region argument — and the account arrives whole: `for_live` zeroes the
-    // floors a written export would apply. Snapshots arrive as the capture grows
+    // region argument — and the account arrives whole, because the default floors
+    // filter nothing on current data. Snapshots arrive as the capture grows
     // (the load responses land in different messages), so this waits for the one
     // that has everything.
     let snapshot = client.snapshot_where(|json| {
