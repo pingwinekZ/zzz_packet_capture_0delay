@@ -16,7 +16,7 @@ original code rather than by re-deriving what it ought to print.
 | `zzz-scan` | `src/crypto/session.hpp`, `src/data/*`, `src/pcap/sync.hpp` | Session handshake, per-message decrypt, the disc/w-engine/agent model, and the sync applier. |
 | `zzz-export` | `src/serialization/zod/*` | The ZOD JSON an optimizer imports, and the only JSON writer in the tree that does not go through `serde_json` (see below). |
 | `zzz-live` | `src/websocket/websocketServer.hpp` | The WebSocket server the optimizer pulls the inventory from. No asio, no OpenSSL: `std::net` plus threads, and a hand-rolled SHA-1. |
-| `zzz-session` | `src/ui/home.cpp` (the pipeline part) | The live decode-and-serve pipeline — region detection, scanning, snapshots, the change log — shared by the CLI and the GUI so the two cannot drift. |
+| `zzz-session` | `src/ui/home.cpp` (the pipeline part) | The GUI's live decode-and-serve pipeline — region detection, scanning, snapshots, the change log. `zzzcap live` has its own; both build their payload with `Izod::for_live`. |
 | `zzz-gui` | `src/ui/*` | The window: capture controls, the sync toggles, live export, and a **console** that logs every item-level change (equips, dismantles, new pulls) with real names. |
 | `zzz-cli` | `main.cpp`, `tools/*` | `zzzcap capture` / `replay` / `probe` / `export` / `live` / `update`. |
 
@@ -424,6 +424,7 @@ C++ app does, so the site's "Live import" switch works against this build:
 cargo run -p zzz-cli -- live                  # capture and serve on 23313
 cargo run -p zzz-cli -- live --in login_capture.json   # serve a recorded dump
 cargo run -p zzz-cli -- live --no-engines     # leave w-engines alone
+cargo run -p zzz-cli -- live --min-disc-rarity 5   # S discs only
 ```
 
 It listens on `127.0.0.1:23313` and accepts any path, so the optimizer's
@@ -440,7 +441,10 @@ the account becomes, and that shapes how a live payload is built:
   category the floors empty out is absent (see the next rule), so the site keeps
   its old records then. The defaults filter nothing on current data (all agents
   are four or five stars, all w-engines three stars or more, all discs B or
-  better). `--no-agents` / `--no-discs` / `--no-engines` are a different thing:
+  better). `zzzcap live` takes `export`'s `--min-*` flags with `export`'s
+  defaults; `--min-agent-rarity 0` and its siblings at `0` send the whole
+  account. The GUI has no floor controls and uses the defaults.
+  `--no-agents` / `--no-discs` / `--no-engines` are a different thing:
   they make the whole category absent, which leaves the site's records alone.
 * **An empty category is absent, never `[]`.** An empty list means "everything was
   deleted"; an absent one means "nothing to say", which the site leaves alone.
@@ -453,6 +457,10 @@ the account becomes, and that shapes how a live payload is built:
 login and pulls the payload over a socket, asserting the account arrives whole
 (1393 discs, 342 w-engines, 48 agents) and that `--no-engines` produces a payload
 with no `wengines` key at all.
+It also serves the dump with `--min-agent-rarity 5 --min-disc-rarity 5`
+and asserts that the payload has as many records per category
+as `zzzcap export` writes with the same flags,
+and fewer agents and discs than with every floor at `0`.
 
 ### Why the reader polls
 
@@ -483,8 +491,10 @@ agent name), and removal is logged with real names as the capture sees it. The
 change log is a ring buffer, so an all-night session cannot grow it without
 bound.
 
-`zzz-gui` runs the same `zzz-session` pipeline `zzzcap live` runs, so the two
-cannot disagree about what was captured. On Linux it uses X11 or Wayland and
+`zzz-gui` runs the `zzz-session` pipeline; `zzzcap live` has its own in
+`zzz-cli`. Both build their payload with `Izod::for_live`, so they apply the same
+payload rules. The GUI has no floor controls and passes the default floors to
+both its live export and its "Copy ZOD JSON". On Linux it uses X11 or Wayland and
 needs the usual GL/desktop runtime; the release workflow installs the build
 dependencies (`libxkbcommon-dev`, `libwayland-dev`, `libx11-dev`,
 `libgl1-mesa-dev`).

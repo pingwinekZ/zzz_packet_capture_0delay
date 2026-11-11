@@ -23,6 +23,7 @@ const ASSETS: &str = "../../../assets";
 /// using that one while this runs.
 const PORT: u16 = 23413;
 const OTHER_PORT: u16 = 23414;
+const FLOOR_PORT: u16 = 23415;
 
 /// How long a client waits for the server to answer, and for the payload that
 /// proves the whole inventory arrived.
@@ -65,6 +66,30 @@ fn serve(dump: &Path, port: u16, extra: &[&str]) -> Serving {
         command.arg(argument);
     }
     Serving(command.spawn().expect("the zzzcap binary starts"))
+}
+
+/// What `zzzcap export` writes for the same dump and flags, which is what a live
+/// payload is compared against, so no test here depends on the recording's
+/// counts.
+fn export(dump: &Path, extra: &[&str]) -> serde_json::Value {
+    let output = Command::new(env!("CARGO_BIN_EXE_zzzcap"))
+        .arg("export")
+        .arg("--in")
+        .arg(dump)
+        .arg("--assets")
+        .arg(assets())
+        .arg("--out")
+        .arg("-")
+        .args(extra)
+        .stderr(Stdio::inherit())
+        .output()
+        .expect("the zzzcap binary runs");
+    assert!(output.status.success(), "export failed: {}", output.status);
+    serde_json::from_slice(&output.stdout).expect("the export is JSON")
+}
+
+fn length(json: &serde_json::Value, category: &str) -> Option<usize> {
+    json[category].as_array().map(Vec::len)
 }
 
 /// A WebSocket client: the handshake, and the server's unmasked frames.
@@ -246,4 +271,46 @@ fn a_switched_off_category_is_absent_from_the_payload() {
     assert!(agent.get("wenginePhase").is_none(), "{agent}");
     // The other categories are unaffected.
     assert_eq!(snapshot["discs"].as_array().unwrap().len(), DISCS);
+}
+
+#[test]
+fn the_floors_apply_to_the_payload() {
+    let Some(dump) = recorded_dump() else {
+        return;
+    };
+    let floors = ["--min-agent-rarity", "5", "--min-disc-rarity", "5"];
+    let expected = export(&dump, &floors);
+    let unfiltered = export(
+        &dump,
+        &[
+            "--min-agent-rarity",
+            "0",
+            "--min-agent-level",
+            "0",
+            "--min-disc-rarity",
+            "0",
+            "--min-disc-level",
+            "0",
+            "--min-engine-rarity",
+            "0",
+            "--min-engine-level",
+            "0",
+        ],
+    );
+    // Without this the test would pass for a server that ignores the floors.
+    for category in ["characters", "discs"] {
+        assert!(
+            length(&expected, category) < length(&unfiltered, category),
+            "the floors remove no {category} from this recording"
+        );
+    }
+
+    let _server = serve(&dump, FLOOR_PORT, &floors);
+    let mut client = Client::wait_for(FLOOR_PORT);
+    client.handshake();
+    client.snapshot_where(|json| {
+        ["characters", "discs", "wengines"]
+            .iter()
+            .all(|category| length(json, category) == length(&expected, category))
+    });
 }

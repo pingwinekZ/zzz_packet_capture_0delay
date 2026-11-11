@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use std::collections::BTreeMap;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use zzz_capture::{Capture, Dump, Packet, GAME_PORT};
 use zzz_crypto::xorpad::XorPad;
 use zzz_export::{ExportSettings, Izod, NanokaNames};
@@ -128,36 +128,8 @@ enum Command {
         /// stderr so a redirect gives you a clean file.
         #[arg(long, default_value = "-")]
         out: String,
-        /// Lowest agent rarity to write, counted in stars (the default of 4
-        /// leaves out the game's three-star agents).
-        #[arg(long, default_value_t = 4)]
-        min_agent_rarity: u8,
-        /// Raise to leave out agents that were captured but never levelled.
-        #[arg(long, default_value_t = 0)]
-        min_agent_level: u8,
-        /// Lowest disc rarity to write, as the band the game encodes in the disc
-        /// id: 3, 4 and 5 are the export's B, A and S.
-        #[arg(long, default_value_t = 3)]
-        min_disc_rarity: u8,
-        /// Raise to leave out under-levelled discs.
-        #[arg(long, default_value_t = 0)]
-        min_disc_level: u8,
-        /// Lowest w-engine rarity to write, counted in stars.
-        #[arg(long, default_value_t = 3)]
-        min_engine_rarity: u8,
-        /// Raise to leave out w-engines that were captured but never levelled.
-        #[arg(long, default_value_t = 0)]
-        min_engine_level: u8,
-        /// Leave a category out entirely, rather than writing it empty. The site
-        /// reads an absent list as "keep what was imported last time".
-        #[arg(long)]
-        no_agents: bool,
-        /// As `--no-agents`, for discs.
-        #[arg(long)]
-        no_discs: bool,
-        /// As `--no-agents`, for w-engines.
-        #[arg(long)]
-        no_engines: bool,
+        #[command(flatten)]
+        selection: SelectionArgs,
     },
     /// Serve the decoded inventory to the optimizer over the reference's
     /// WebSocket, so it can be pulled live instead of imported from a file.
@@ -166,6 +138,10 @@ enum Command {
     /// client that connects in between is given the last one. Categories the
     /// capture has nothing for are left out of the payload rather than sent
     /// empty, because the optimizer's import replaces what it has.
+    ///
+    /// The floors apply as they do for `export`, with the same flags and
+    /// defaults, so a record below a floor disappears from the optimizer on
+    /// the next snapshot.
     Live {
         /// Directory holding `datamine.json` and `nap.json`.
         #[arg(long, default_value = "../assets")]
@@ -190,16 +166,8 @@ enum Command {
         /// Port the optimizer connects to; `23313` is the reference's.
         #[arg(long = "ws-port", default_value_t = zzz_live::DEFAULT_PORT)]
         ws_port: u16,
-        /// Send no agents, so the site keeps the ones it has. As with
-        /// `export`, a switched-off category is never sent as an empty list.
-        #[arg(long)]
-        no_agents: bool,
-        /// As `--no-agents`, for discs.
-        #[arg(long)]
-        no_discs: bool,
-        /// As `--no-agents`, for w-engines.
-        #[arg(long)]
-        no_engines: bool,
+        #[command(flatten)]
+        selection: SelectionArgs,
         /// Stop after this many seconds; 0 runs until interrupted. A dump that
         /// runs out does not stop the server: it keeps serving what it was fed.
         #[arg(long, default_value_t = 0)]
@@ -212,6 +180,58 @@ enum Command {
         #[arg(long, default_value = "../assets")]
         assets: PathBuf,
     },
+}
+
+// No doc comment: clap would take it as the help text of the subcommands
+// that flatten this.
+#[derive(Args)]
+struct SelectionArgs {
+    /// Lowest agent rarity to write, counted in stars (the default of 4
+    /// leaves out the game's three-star agents).
+    #[arg(long, default_value_t = 4)]
+    min_agent_rarity: u8,
+    /// Raise to leave out agents that were captured but never levelled.
+    #[arg(long, default_value_t = 0)]
+    min_agent_level: u8,
+    /// Lowest disc rarity to write, as the band the game encodes in the disc
+    /// id: 3, 4 and 5 are the export's B, A and S.
+    #[arg(long, default_value_t = 3)]
+    min_disc_rarity: u8,
+    /// Raise to leave out under-levelled discs.
+    #[arg(long, default_value_t = 0)]
+    min_disc_level: u8,
+    /// Lowest w-engine rarity to write, counted in stars.
+    #[arg(long, default_value_t = 3)]
+    min_engine_rarity: u8,
+    /// Raise to leave out w-engines that were captured but never levelled.
+    #[arg(long, default_value_t = 0)]
+    min_engine_level: u8,
+    /// Leave a category out entirely, rather than writing it empty. The site
+    /// reads an absent list as "keep what was imported last time".
+    #[arg(long)]
+    no_agents: bool,
+    /// As `--no-agents`, for discs.
+    #[arg(long)]
+    no_discs: bool,
+    /// As `--no-agents`, for w-engines.
+    #[arg(long)]
+    no_engines: bool,
+}
+
+impl From<&SelectionArgs> for ExportSettings {
+    fn from(selection: &SelectionArgs) -> Self {
+        Self {
+            min_agent_rarity: selection.min_agent_rarity,
+            min_agent_level: selection.min_agent_level,
+            min_disc_rarity: selection.min_disc_rarity,
+            min_disc_level: selection.min_disc_level,
+            min_engine_rarity: selection.min_engine_rarity,
+            min_engine_level: selection.min_engine_level,
+            export_agents: !selection.no_agents,
+            export_discs: !selection.no_discs,
+            export_engines: !selection.no_engines,
+        }
+    }
 }
 
 /// How many packets a region candidate gets to prove itself in.
@@ -265,32 +285,14 @@ fn main() -> ExitCode {
             region,
             seed,
             out,
-            min_agent_rarity,
-            min_agent_level,
-            min_disc_rarity,
-            min_disc_level,
-            min_engine_rarity,
-            min_engine_level,
-            no_agents,
-            no_discs,
-            no_engines,
+            selection,
         } => report(export(
             &input,
             &assets,
             region.as_deref(),
             seed.as_deref(),
             &out,
-            ExportSettings {
-                min_agent_rarity,
-                min_agent_level,
-                min_disc_rarity,
-                min_disc_level,
-                min_engine_rarity,
-                min_engine_level,
-                export_agents: !no_agents,
-                export_discs: !no_discs,
-                export_engines: !no_engines,
-            },
+            ExportSettings::from(&selection),
         )),
         Command::Live {
             assets,
@@ -299,9 +301,7 @@ fn main() -> ExitCode {
             seed,
             port,
             ws_port,
-            no_agents,
-            no_discs,
-            no_engines,
+            selection,
             seconds,
         } => report(live(LiveOptions {
             assets: &assets,
@@ -310,12 +310,7 @@ fn main() -> ExitCode {
             seed: seed.as_deref(),
             port,
             ws_port,
-            settings: ExportSettings {
-                export_agents: !no_agents,
-                export_discs: !no_discs,
-                export_engines: !no_engines,
-                ..ExportSettings::default()
-            },
+            settings: ExportSettings::from(&selection),
             seconds,
         })),
         Command::Update { assets } => report(update(&assets)),
@@ -1228,7 +1223,9 @@ struct LiveOptions<'a> {
 /// The port and the payload are the reference's: the server comes from
 /// `websocketServer.hpp`, and each snapshot is `makeLiveZodJson` — see
 /// [`Izod::for_live`] for the rule that makes a live payload different from a
-/// written one.
+/// written one. The floors and category toggles in `options.settings` are the
+/// ones `export` takes, and they apply to the payload the same way: a record
+/// below a floor disappears from the optimizer on the next snapshot.
 fn live(options: LiveOptions<'_>) -> Result<(), String> {
     let LiveOptions {
         assets,
