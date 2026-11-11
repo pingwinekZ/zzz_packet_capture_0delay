@@ -24,7 +24,7 @@ Features of the fork are:
 - Live capture needs raw-socket access. Run the binaries as root, or grant the capability once:
   `sudo setcap cap_net_raw,cap_net_admin=eip ./zzzcap` and `sudo setcap cap_net_raw,cap_net_admin=eip ./zzzgui`
 - Start `./zzzgui`, or use the console: `./zzzcap capture --seconds 180`
-- The rest is the same as on Windows: start the game and log in, then use live export, or run `zzzcap live` for the console equivalent. A game running under Wine/Proton is captured through the host network stack like any other process.
+- The rest is the same as on Windows: start the game and log in, then use live export, or run `zzzcap live` for the console equivalent (`zzzcap live --out zod.json` also keeps a ZOD JSON file up to date next to the live feed). A game running under Wine/Proton is captured through the host network stack like any other process.
 - Capture listens on every interface by default. If your traffic goes through a VPN or a specific adapter, set `ZZZ_CAPTURE_DEVICE=eth0` (or the matching name from `ip link`) before starting.
 - The archive is built on Ubuntu 22.04, so it needs glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, current Fedora/Arch). On an older distribution, build it from source instead (see Building).
 

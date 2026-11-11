@@ -425,6 +425,7 @@ cargo run -p zzz-cli -- live                  # capture and serve on 23313
 cargo run -p zzz-cli -- live --in login_capture.json   # serve a recorded dump
 cargo run -p zzz-cli -- live --no-engines     # leave w-engines alone
 cargo run -p zzz-cli -- live --min-disc-rarity 5   # S discs only
+cargo run -p zzz-cli -- live --out zod.json   # also keep a file up to date
 ```
 
 It listens on `127.0.0.1:23313` and accepts any path, so the optimizer's
@@ -453,6 +454,20 @@ the account becomes, and that shapes how a live payload is built:
   is a refusal here as it is for a file export, rather than something to serve
   half of.
 
+`--out <path>` keeps a ZOD JSON file next to the feed:
+the bytes `zzzcap export` would write for what has been captured so far,
+floors and `--no-*` flags included,
+so a category that is switched on but empty is written as `[]` there.
+It is replaced atomically whenever the payload changes
+(written to `<path>.tmp` and renamed over `<path>`),
+and nothing is written before the first inventory arrives.
+A failed write is a warning on stderr, not a stop:
+it is retried on the next change,
+and once more when the feed ends or `--seconds` runs out,
+but not on an interrupt, which ends the process on the spot.
+A failed rename may leave `<path>.tmp` behind,
+and two sessions must not share one `--out` path.
+
 `rust/crates/zzz-cli/tests/live_cli.rs` runs the built binary against the recorded
 login and pulls the payload over a socket, asserting the account arrives whole
 (1393 discs, 342 w-engines, 48 agents) and that `--no-engines` produces a payload
@@ -461,6 +476,10 @@ It also serves the dump with `--min-agent-rarity 5 --min-disc-rarity 5`
 and asserts that the payload has as many records per category
 as `zzzcap export` writes with the same flags,
 and fewer agents and discs than with every floor at `0`.
+Finally it runs `zzzcap live --seconds 1 --out` to completion
+with no flags, with `--no-engines` and with those two floors,
+and asserts that each file is byte for byte what `zzzcap export` writes
+with the same flags.
 
 ### Why the reader polls
 
