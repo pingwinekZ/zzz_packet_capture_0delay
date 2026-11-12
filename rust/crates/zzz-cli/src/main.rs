@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use std::collections::BTreeMap;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use zzz_capture::{Capture, Dump, Packet, GAME_PORT};
 use zzz_crypto::xorpad::XorPad;
 use zzz_export::{ExportSettings, Izod, NanokaNames};
@@ -128,36 +128,8 @@ enum Command {
         /// stderr so a redirect gives you a clean file.
         #[arg(long, default_value = "-")]
         out: String,
-        /// Lowest agent rarity to write, counted in stars (the default of 4
-        /// leaves out the game's three-star agents).
-        #[arg(long, default_value_t = 4)]
-        min_agent_rarity: u8,
-        /// Raise to leave out agents that were captured but never levelled.
-        #[arg(long, default_value_t = 0)]
-        min_agent_level: u8,
-        /// Lowest disc rarity to write, as the band the game encodes in the disc
-        /// id: 3, 4 and 5 are the export's B, A and S.
-        #[arg(long, default_value_t = 3)]
-        min_disc_rarity: u8,
-        /// Raise to leave out under-levelled discs.
-        #[arg(long, default_value_t = 0)]
-        min_disc_level: u8,
-        /// Lowest w-engine rarity to write, counted in stars.
-        #[arg(long, default_value_t = 3)]
-        min_engine_rarity: u8,
-        /// Raise to leave out w-engines that were captured but never levelled.
-        #[arg(long, default_value_t = 0)]
-        min_engine_level: u8,
-        /// Leave a category out entirely, rather than writing it empty. The site
-        /// reads an absent list as "keep what was imported last time".
-        #[arg(long)]
-        no_agents: bool,
-        /// As `--no-agents`, for discs.
-        #[arg(long)]
-        no_discs: bool,
-        /// As `--no-agents`, for w-engines.
-        #[arg(long)]
-        no_engines: bool,
+        #[command(flatten)]
+        selection: SelectionArgs,
     },
     /// Serve the decoded inventory to the optimizer over the reference's
     /// WebSocket, so it can be pulled live instead of imported from a file.
@@ -166,6 +138,10 @@ enum Command {
     /// client that connects in between is given the last one. Categories the
     /// capture has nothing for are left out of the payload rather than sent
     /// empty, because the optimizer's import replaces what it has.
+    ///
+    /// The floors apply as they do for `export`, with the same flags and
+    /// defaults, so a record below a floor disappears from the optimizer on
+    /// the next snapshot.
     Live {
         /// Directory holding `datamine.json` and `nap.json`.
         #[arg(long, default_value = "../assets")]
@@ -190,16 +166,13 @@ enum Command {
         /// Port the optimizer connects to; `23313` is the reference's.
         #[arg(long = "ws-port", default_value_t = zzz_live::DEFAULT_PORT)]
         ws_port: u16,
-        /// Send no agents, so the site keeps the ones it has. As with
-        /// `export`, a switched-off category is never sent as an empty list.
+        /// Also keep this file up to date with the ZOD JSON `export` would write
+        /// for what has been captured so far, rewritten atomically on every
+        /// change. A file path only: stdout carries the log.
         #[arg(long)]
-        no_agents: bool,
-        /// As `--no-agents`, for discs.
-        #[arg(long)]
-        no_discs: bool,
-        /// As `--no-agents`, for w-engines.
-        #[arg(long)]
-        no_engines: bool,
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        selection: SelectionArgs,
         /// Stop after this many seconds; 0 runs until interrupted. A dump that
         /// runs out does not stop the server: it keeps serving what it was fed.
         #[arg(long, default_value_t = 0)]
@@ -212,6 +185,58 @@ enum Command {
         #[arg(long, default_value = "../assets")]
         assets: PathBuf,
     },
+}
+
+// No doc comment: clap would take it as the help text of the subcommands
+// that flatten this.
+#[derive(Args)]
+struct SelectionArgs {
+    /// Lowest agent rarity to write, counted in stars (the default of 4
+    /// leaves out the game's three-star agents).
+    #[arg(long, default_value_t = 4)]
+    min_agent_rarity: u8,
+    /// Raise to leave out agents that were captured but never levelled.
+    #[arg(long, default_value_t = 0)]
+    min_agent_level: u8,
+    /// Lowest disc rarity to write, as the band the game encodes in the disc
+    /// id: 3, 4 and 5 are the export's B, A and S.
+    #[arg(long, default_value_t = 3)]
+    min_disc_rarity: u8,
+    /// Raise to leave out under-levelled discs.
+    #[arg(long, default_value_t = 0)]
+    min_disc_level: u8,
+    /// Lowest w-engine rarity to write, counted in stars.
+    #[arg(long, default_value_t = 3)]
+    min_engine_rarity: u8,
+    /// Raise to leave out w-engines that were captured but never levelled.
+    #[arg(long, default_value_t = 0)]
+    min_engine_level: u8,
+    /// Leave a category out entirely, rather than writing it empty. The site
+    /// reads an absent list as "keep what was imported last time".
+    #[arg(long)]
+    no_agents: bool,
+    /// As `--no-agents`, for discs.
+    #[arg(long)]
+    no_discs: bool,
+    /// As `--no-agents`, for w-engines.
+    #[arg(long)]
+    no_engines: bool,
+}
+
+impl From<&SelectionArgs> for ExportSettings {
+    fn from(selection: &SelectionArgs) -> Self {
+        Self {
+            min_agent_rarity: selection.min_agent_rarity,
+            min_agent_level: selection.min_agent_level,
+            min_disc_rarity: selection.min_disc_rarity,
+            min_disc_level: selection.min_disc_level,
+            min_engine_rarity: selection.min_engine_rarity,
+            min_engine_level: selection.min_engine_level,
+            export_agents: !selection.no_agents,
+            export_discs: !selection.no_discs,
+            export_engines: !selection.no_engines,
+        }
+    }
 }
 
 /// How many packets a region candidate gets to prove itself in.
@@ -265,32 +290,14 @@ fn main() -> ExitCode {
             region,
             seed,
             out,
-            min_agent_rarity,
-            min_agent_level,
-            min_disc_rarity,
-            min_disc_level,
-            min_engine_rarity,
-            min_engine_level,
-            no_agents,
-            no_discs,
-            no_engines,
+            selection,
         } => report(export(
             &input,
             &assets,
             region.as_deref(),
             seed.as_deref(),
             &out,
-            ExportSettings {
-                min_agent_rarity,
-                min_agent_level,
-                min_disc_rarity,
-                min_disc_level,
-                min_engine_rarity,
-                min_engine_level,
-                export_agents: !no_agents,
-                export_discs: !no_discs,
-                export_engines: !no_engines,
-            },
+            ExportSettings::from(&selection),
         )),
         Command::Live {
             assets,
@@ -299,9 +306,8 @@ fn main() -> ExitCode {
             seed,
             port,
             ws_port,
-            no_agents,
-            no_discs,
-            no_engines,
+            out,
+            selection,
             seconds,
         } => report(live(LiveOptions {
             assets: &assets,
@@ -310,12 +316,8 @@ fn main() -> ExitCode {
             seed: seed.as_deref(),
             port,
             ws_port,
-            settings: ExportSettings {
-                export_agents: !no_agents,
-                export_discs: !no_discs,
-                export_engines: !no_engines,
-                ..ExportSettings::default()
-            },
+            out: out.as_deref(),
+            settings: ExportSettings::from(&selection),
             seconds,
         })),
         Command::Update { assets } => report(update(&assets)),
@@ -1219,6 +1221,8 @@ struct LiveOptions<'a> {
     port: u16,
     /// The port the optimizer connects to.
     ws_port: u16,
+    /// Where to keep the file `export` would write, if anywhere.
+    out: Option<&'a Path>,
     settings: ExportSettings,
     seconds: u64,
 }
@@ -1227,8 +1231,13 @@ struct LiveOptions<'a> {
 ///
 /// The port and the payload are the reference's: the server comes from
 /// `websocketServer.hpp`, and each snapshot is `makeLiveZodJson` — see
-/// [`Izod::for_live`] for the two rules that make a live payload different from a
-/// written one.
+/// [`Izod::for_live`] for the rule that makes a live payload different from a
+/// written one. The floors and category toggles in `options.settings` are the
+/// ones `export` takes, and they apply to the payload the same way: a record
+/// below a floor disappears from the optimizer on the next snapshot.
+///
+/// With `options.out`, the file `export` would write is kept next to the feed,
+/// built from the same settings and rewritten whenever the payload changes.
 fn live(options: LiveOptions<'_>) -> Result<(), String> {
     let LiveOptions {
         assets,
@@ -1237,6 +1246,7 @@ fn live(options: LiveOptions<'_>) -> Result<(), String> {
         seed,
         port,
         ws_port,
+        out,
         settings,
         seconds,
     } = options;
@@ -1281,16 +1291,26 @@ fn live(options: LiveOptions<'_>) -> Result<(), String> {
         ),
         None => println!("  source:      live UDP port {port}"),
     }
+    if let Some(path) = out {
+        println!(
+            "  file:        {} (rewritten on every change)",
+            path.display()
+        );
+    }
     if input.is_none() && region.is_none() && seed.is_none() {
         println!("  region:      detected from the login, like `replay` does");
     }
 
     let started = Instant::now();
-    let mut session = Live::new(&data, &candidates, settings, &server, latest);
+    let mut session = Live::new(&data, &candidates, settings, out, &server, latest);
     let outcome = match input {
         Some(path) => session.stream_dump(path),
         None => stream_device(&mut session, port, seconds),
     };
+    // Retried however the feed ended, a capture error included: the file is
+    // worth having either way. An interrupt kills the process before this.
+    let finished = session.finish_out();
+    let outcome = outcome.and(finished);
 
     // A recorded dump runs out, and that is not a reason to drop the optimizer:
     // the server goes on serving what it was handed until it is interrupted.
@@ -1322,6 +1342,14 @@ struct Live<'a> {
     data: &'a GameData,
     candidates: &'a [(String, u64)],
     settings: ExportSettings,
+    /// The `--out` file, built from the same settings as the payload.
+    out: Option<&'a Path>,
+    /// Set when the `--out` file is behind the payload because a write failed.
+    /// `latest` cannot tell: it is updated before the write is attempted, so
+    /// without this an unchanged payload would never retry it.
+    file_pending: bool,
+    /// The size of the last `--out` file written, if one was.
+    file_bytes: Option<usize>,
     server: &'a zzz_live::Server,
     /// The payload a client that connects between snapshots receives.
     latest: Arc<Mutex<String>>,
@@ -1341,6 +1369,7 @@ impl<'a> Live<'a> {
         data: &'a GameData,
         candidates: &'a [(String, u64)],
         settings: ExportSettings,
+        out: Option<&'a Path>,
         server: &'a zzz_live::Server,
         latest: Arc<Mutex<String>>,
     ) -> Self {
@@ -1348,6 +1377,9 @@ impl<'a> Live<'a> {
             data,
             candidates,
             settings,
+            out,
+            file_pending: false,
+            file_bytes: None,
             server,
             latest,
             scanner: None,
@@ -1422,26 +1454,30 @@ impl<'a> Live<'a> {
                     &NanokaNames(&self.data.nanoka),
                     &self.settings,
                 )
-                .map_err(|error| {
-                    format!(
-                        "cannot build a snapshot: {error} — the session stops rather than \
-                         sending a payload the optimizer would import"
-                    )
-                })?;
+                .map_err(refuse_snapshot)?;
                 zod.to_json()
             }
             _ => return Ok(()),
         };
 
-        {
+        let changed = {
             let mut latest = self.latest.lock().unwrap();
-            // An applied sync that changed nothing among the exported categories
-            // produces the same bytes; sending them again would only make the
-            // optimizer re-import what it already has.
-            if *latest == json {
-                return Ok(());
+            let changed = *latest != json;
+            if changed {
+                *latest = json.clone();
             }
-            *latest = json.clone();
+            changed
+        };
+        // The file follows the payload: with the same settings, an unchanged
+        // payload means an unchanged file, unless the last write failed.
+        if changed || self.file_pending {
+            self.write_out("retrying on the next applied sync")?;
+        }
+        // An applied sync that changed nothing among the exported categories
+        // produces the same bytes; sending them again would only make the
+        // optimizer re-import what it already has.
+        if !changed {
+            return Ok(());
         }
         self.server.broadcast_text(&json);
         self.snapshots += 1;
@@ -1464,6 +1500,52 @@ impl<'a> Live<'a> {
             self.server.client_count()
         );
         Ok(())
+    }
+
+    /// Writes the `--out` file from what has been extracted, as `export` would.
+    ///
+    /// A failed write is a warning rather than the end of the session, as a
+    /// failed checkpoint is in `capture`: the optimizer is still being served, and
+    /// the write is retried on the next change and when the feed ends. `next`
+    /// tells the warning what happens after a failure, which depends on the caller.
+    fn write_out(&mut self, next: &str) -> Result<(), String> {
+        let Some(path) = self.out else {
+            return Ok(());
+        };
+        let Some(inventory) = self
+            .scanner
+            .as_ref()
+            .map(Scanner::inventory)
+            .filter(|inventory| !inventory.is_empty())
+        else {
+            return Ok(());
+        };
+        let json = Izod::from_inventory(inventory, &NanokaNames(&self.data.nanoka), &self.settings)
+            .map_err(refuse_snapshot)?
+            .to_json();
+        match write_atomically(path, json.as_bytes()) {
+            Ok(()) => {
+                self.file_pending = false;
+                self.file_bytes = Some(json.len());
+            }
+            Err(error) => {
+                self.file_pending = true;
+                eprintln!(
+                    "  warning: cannot write {}: {error}; {next}",
+                    path.display()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The last chance for a write that failed: the feed has ended, so no change
+    /// will come to retry it.
+    fn finish_out(&mut self) -> Result<(), String> {
+        if !self.file_pending {
+            return Ok(());
+        }
+        self.write_out("the feed has ended, so no retry follows and the file is stale or absent")
     }
 
     /// Feeds a recorded dump. This is what makes the server exercisable without
@@ -1517,6 +1599,17 @@ impl<'a> Live<'a> {
                     "  messages:  {} decoded of {} reassembled",
                     stats.decoded, stats.messages
                 );
+                if let Some(path) = self.out {
+                    match (self.file_pending, self.file_bytes) {
+                        (true, _) => {
+                            println!("  file:      {} (last write failed)", path.display())
+                        }
+                        (false, Some(bytes)) => {
+                            println!("  file:      {}, {bytes} bytes", path.display())
+                        }
+                        (false, None) => println!("  file:      {} not written", path.display()),
+                    }
+                }
             }
             _ => {
                 println!(
@@ -1578,6 +1671,26 @@ fn stream_device(session: &mut Live<'_>, port: u16, seconds: u64) -> Result<(), 
         Some(message) => Err(message),
         None => Ok(()),
     }
+}
+
+/// Why a payload or `--out` file could not be built, which ends the session.
+fn refuse_snapshot(error: zzz_export::ExportError) -> String {
+    format!(
+        "cannot build a snapshot: {error} — the session stops rather than sending a \
+         payload the optimizer would import"
+    )
+}
+
+/// Replaces `path` with `bytes` so that a reader sees the old file or the new
+/// one, never half of either: the bytes go to `<path>.tmp` beside it, on the
+/// same filesystem, and the rename swaps it in.
+fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    // Appended rather than `with_extension`, which would turn `zod.json` into
+    // `zod.tmp`.
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }
 
 /// Region name and seed pairs to try, most specific first.
@@ -2021,6 +2134,29 @@ mod tests {
         shape.absorb(&message);
         assert_eq!(shape.count, 1);
         assert_eq!(shape.describe(), "#3 message, #7 varint, #15 packed");
+    }
+
+    #[test]
+    fn write_atomically_replaces_the_file_and_leaves_no_temporary_behind() {
+        let dir =
+            std::env::temp_dir().join(format!("zzzcap-write-atomically-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the scratch directory");
+        let path = dir.join("zod.json");
+
+        let first = write_atomically(&path, b"first");
+        let second = write_atomically(&path, b"second, and longer");
+        let content = std::fs::read(&path).ok();
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .expect("list the scratch directory")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        // Removed before asserting, so a failure leaves nothing behind either.
+        std::fs::remove_dir_all(&dir).expect("remove the scratch directory");
+
+        assert!(first.is_ok() && second.is_ok(), "{first:?} {second:?}");
+        assert_eq!(content.as_deref(), Some(&b"second, and longer"[..]));
+        assert_eq!(names, ["zod.json"]);
     }
 
     #[test]

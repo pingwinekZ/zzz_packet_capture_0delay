@@ -16,7 +16,7 @@ original code rather than by re-deriving what it ought to print.
 | `zzz-scan` | `src/crypto/session.hpp`, `src/data/*`, `src/pcap/sync.hpp` | Session handshake, per-message decrypt, the disc/w-engine/agent model, and the sync applier. |
 | `zzz-export` | `src/serialization/zod/*` | The ZOD JSON an optimizer imports, and the only JSON writer in the tree that does not go through `serde_json` (see below). |
 | `zzz-live` | `src/websocket/websocketServer.hpp` | The WebSocket server the optimizer pulls the inventory from. No asio, no OpenSSL: `std::net` plus threads, and a hand-rolled SHA-1. |
-| `zzz-session` | `src/ui/home.cpp` (the pipeline part) | The live decode-and-serve pipeline — region detection, scanning, snapshots, the change log — shared by the CLI and the GUI so the two cannot drift. |
+| `zzz-session` | `src/ui/home.cpp` (the pipeline part) | The GUI's live decode-and-serve pipeline — region detection, scanning, snapshots, the change log. `zzzcap live` has its own; both build their payload with `Izod::for_live`. |
 | `zzz-gui` | `src/ui/*` | The window: capture controls, the sync toggles, live export, and a **console** that logs every item-level change (equips, dismantles, new pulls) with real names. |
 | `zzz-cli` | `main.cpp`, `tools/*` | `zzzcap capture` / `replay` / `probe` / `export` / `live` / `update`. |
 
@@ -424,6 +424,8 @@ C++ app does, so the site's "Live import" switch works against this build:
 cargo run -p zzz-cli -- live                  # capture and serve on 23313
 cargo run -p zzz-cli -- live --in login_capture.json   # serve a recorded dump
 cargo run -p zzz-cli -- live --no-engines     # leave w-engines alone
+cargo run -p zzz-cli -- live --min-disc-rarity 5   # S discs only
+cargo run -p zzz-cli -- live --out zod.json   # also keep a file up to date
 ```
 
 It listens on `127.0.0.1:23313` and accepts any path, so the optimizer's
@@ -431,15 +433,20 @@ It listens on `127.0.0.1:23313` and accepts any path, so the optimizer's
 whenever the capture changes the inventory, and a client that connects in between
 is given the last one.
 
-Three rules decide what a live payload may contain, and all three follow from the
-optimizer importing with replace semantics — what the payload says is what the
-account becomes:
+The optimizer imports with replace semantics, so what the payload says is what
+the account becomes, and that shapes how a live payload is built:
 
-* **The floors are ignored.** `--min-disc-level` and its siblings are zeroed for a
-  live payload however they were passed: a floor would delete every record below
-  it from the site on the next snapshot. `--no-agents` / `--no-discs` /
-  `--no-engines` still apply, because that is how the user says "stop syncing
-  this".
+* **The floors apply.** The payload is filtered exactly like a file export, in
+  `zzzcap live` and in the GUI. A floor therefore deletes the records below it
+  from the site on the next snapshot that still has records in that category; a
+  category the floors empty out is absent (see the next rule), so the site keeps
+  its old records then. The defaults filter nothing on current data (all agents
+  are four or five stars, all w-engines three stars or more, all discs B or
+  better). `zzzcap live` takes `export`'s `--min-*` flags with `export`'s
+  defaults; `--min-agent-rarity 0` and its siblings at `0` send the whole
+  account. The GUI has no floor controls and uses the defaults.
+  `--no-agents` / `--no-discs` / `--no-engines` are a different thing:
+  they make the whole category absent, which leaves the site's records alone.
 * **An empty category is absent, never `[]`.** An empty list means "everything was
   deleted"; an absent one means "nothing to say", which the site leaves alone.
   This is the state at the start of a session, before the load responses land.
@@ -447,10 +454,32 @@ account becomes:
   is a refusal here as it is for a file export, rather than something to serve
   half of.
 
+`--out <path>` keeps a ZOD JSON file next to the feed:
+the bytes `zzzcap export` would write for what has been captured so far,
+floors and `--no-*` flags included,
+so a category that is switched on but empty is written as `[]` there.
+It is replaced atomically whenever the payload changes
+(written to `<path>.tmp` and renamed over `<path>`),
+and nothing is written before the first inventory arrives.
+A failed write is a warning on stderr, not a stop:
+it is retried on the next change,
+and once more when the feed ends or `--seconds` runs out,
+but not on an interrupt, which ends the process on the spot.
+A failed rename may leave `<path>.tmp` behind,
+and two sessions must not share one `--out` path.
+
 `rust/crates/zzz-cli/tests/live_cli.rs` runs the built binary against the recorded
 login and pulls the payload over a socket, asserting the account arrives whole
 (1393 discs, 342 w-engines, 48 agents) and that `--no-engines` produces a payload
 with no `wengines` key at all.
+It also serves the dump with `--min-agent-rarity 5 --min-disc-rarity 5`
+and asserts that the payload has as many records per category
+as `zzzcap export` writes with the same flags,
+and fewer agents and discs than with every floor at `0`.
+Finally it runs `zzzcap live --seconds 1 --out` to completion
+with no flags, with `--no-engines` and with those two floors,
+and asserts that each file is byte for byte what `zzzcap export` writes
+with the same flags.
 
 ### Why the reader polls
 
@@ -481,8 +510,10 @@ agent name), and removal is logged with real names as the capture sees it. The
 change log is a ring buffer, so an all-night session cannot grow it without
 bound.
 
-`zzz-gui` runs the same `zzz-session` pipeline `zzzcap live` runs, so the two
-cannot disagree about what was captured. On Linux it uses X11 or Wayland and
+`zzz-gui` runs the `zzz-session` pipeline; `zzzcap live` has its own in
+`zzz-cli`. Both build their payload with `Izod::for_live`, so they apply the same
+payload rules. The GUI has no floor controls and passes the default floors to
+both its live export and its "Copy ZOD JSON". On Linux it uses X11 or Wayland and
 needs the usual GL/desktop runtime; the release workflow installs the build
 dependencies (`libxkbcommon-dev`, `libwayland-dev`, `libx11-dev`,
 `libgl1-mesa-dev`).

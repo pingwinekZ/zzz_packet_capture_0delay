@@ -1,9 +1,9 @@
-//! The live pipeline shared by `zzzcap live` and the GUI: packets in, the region
-//! detected, the inventory extracted, snapshots served, every change logged.
+//! The GUI's live pipeline: packets in, the region detected, the inventory
+//! extracted, snapshots served, every change logged.
 //!
-//! Extracted into its own crate rather than kept in `zzz-cli` so the two front
-//! ends cannot drift: whatever the console prints, the GUI shows, because both
-//! run this.
+//! `zzzcap live` does not run this; it has its own pipeline in `zzz-cli`. What
+//! keeps the two front ends' payloads in step is that both build them with
+//! [`zzz_export::Izod::for_live`].
 //!
 //! The threading contract is the one the reference establishes with its
 //! observers: [`Session::feed`] is called from the capture thread, does the
