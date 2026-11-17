@@ -49,11 +49,18 @@ fn main() {
     }
 }
 
-/// `OUT_DIR` is `<target>/<profile>/build/<crate>-<hash>/out`, so three levels up
-/// is the directory the executable lands in.
+/// `OUT_DIR` is somewhere under `<target>/<profile>/build/`, and the executable
+/// lands in `<target>/<profile>/`. The number of levels between `build` and `out`
+/// is not fixed: older Cargo used `build/<crate>-<hash>/out`, newer Cargo nests
+/// `build/<crate>/<hash>/out`, so counting ancestors puts the files one level too
+/// high on the newer layout. Look for the `build` component instead.
 fn profile_dir() -> Option<PathBuf> {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").ok()?);
-    out_dir.ancestors().nth(3).map(Path::to_path_buf)
+    out_dir
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "build"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
 }
 
 fn copy_if_newer(from: &Path, to: &Path) -> std::io::Result<()> {
