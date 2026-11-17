@@ -259,18 +259,20 @@ toggle arrives as an ordinary sync — which is also why the live export refresh
 when one is flipped. The numbers were found by marking a disc for discard and
 then locking it in a capture, not by guessing between the disc's bool fields.
 
-The floors are the reference's defaults, and they are worth reading before you
-change them: `--min-agent-rarity 4` (the game's three-star agents are left out),
-`--min-disc-rarity 3` and `--min-engine-rarity 3`. Note that agent and w-engine
-rarity is counted in *stars*, from the nanoka rank, while disc rarity is the band
-the game encodes in the disc id — 3, 4 and 5 are the export's B, A and S. The two
-floors count different things because the reference compares them against
-different sources.
+The export has five filters, all on by default. `--no-agents`, `--no-discs` and
+`--no-engines` leave a category *out of the file*. That is not the same as
+writing it empty, and it is not a cosmetic choice: an absent list tells the site
+to keep what it imported last time, while an empty one clears it.
 
-`--no-agents`, `--no-discs` and `--no-engines` leave a category *out of the
-file*. That is not the same as writing it empty, and it is not a cosmetic choice:
-an absent list tells the site to keep what it imported last time, while an empty
-one clears it.
+`--no-disc-equip-status` omits every disc's `location`, and
+`--no-engine-equip-status` omits each w-engine's `location` plus each agent's
+`wengineKey`/`wenginePhase`. With the key gone the site sees those items as
+unequipped; it does not delete the records.
+
+This port has no rarity or level floors. The reference has six, but the encoded
+disc band and the nanoka star rating were never the thing users wanted to filter
+on, so everything captured is written unless one of the five switches above says
+otherwise. That is a deliberate divergence from the C++ build.
 
 Two refusals rather than bad output. An inventory that decoded nothing is not
 exported at all, because every category would arrive empty and the import would
@@ -339,7 +341,7 @@ These are the assertions that make the port trustworthy without needing the game
 | `refresh` | The downgrade guard: a published datamine that drops a key, a published nap that drops a descriptor, one this build cannot parse, and one that only adds keys |
 | `datamine`/`nanoka` | The committed `assets/*.json`, and a full refresh against a canned fetcher |
 | `json` | glaze's escape set, byte by byte, over all 32 control codes |
-| `zod` | The shape and field order the reference writes, the zero-based conversions, the four padded substat slots, the maps that are built before filtering, and every refusal |
+| `zod` | The shape and field order the reference writes, the zero-based conversions, the four padded substat slots, the owner maps, the five filters, and every refusal |
 | `zzz-export` | **The C++ implementation itself** — see the export parity section below |
 | all of `zzz-crypto` | **The C++ implementation itself** — see below |
 
@@ -382,8 +384,8 @@ Two of its outputs are committed as fixtures:
 
 | Fixture | What it is |
 | --- | --- |
-| `testdata/parity/zod_export.json` | The inventory decoded from `login_capture.json`, with every floor at zero: all 1393 discs, 342 w-engines and 48 agents, 401 KB |
-| `testdata/parity/zod_edge_export.json` | A small synthetic inventory at the *default* settings: the filters, the padded substat slots, a w-engine that never arrived, a disc below the rarity floor |
+| `testdata/parity/zod_export.json` | The inventory decoded from `login_capture.json`, with the reference's every floor at zero: all 1393 discs, 342 w-engines and 48 agents, 401 KB |
+| `testdata/parity/zod_edge_export.json` | A small synthetic inventory at the *default* settings: the padded substat slots, a w-engine that never arrived, and a dressed and a bagged disc |
 
 `rust/crates/zzz-export/tests/cpp_export_parity.rs` asserts the Rust export
 reproduces both byte for byte. The inputs (`zod_inventory.json`,
@@ -424,7 +426,7 @@ C++ app does, so the site's "Live import" switch works against this build:
 cargo run -p zzz-cli -- live                  # capture and serve on 23313
 cargo run -p zzz-cli -- live --in login_capture.json   # serve a recorded dump
 cargo run -p zzz-cli -- live --no-engines     # leave w-engines alone
-cargo run -p zzz-cli -- live --min-disc-rarity 5   # S discs only
+cargo run -p zzz-cli -- live --no-disc-equip-status  # discs arrive unequipped
 cargo run -p zzz-cli -- live --out zod.json   # also keep a file up to date
 ```
 
@@ -436,17 +438,13 @@ is given the last one.
 The optimizer imports with replace semantics, so what the payload says is what
 the account becomes, and that shapes how a live payload is built:
 
-* **The floors apply.** The payload is filtered exactly like a file export, in
-  `zzzcap live` and in the GUI. A floor therefore deletes the records below it
-  from the site on the next snapshot that still has records in that category; a
-  category the floors empty out is absent (see the next rule), so the site keeps
-  its old records then. The defaults filter nothing on current data (all agents
-  are four or five stars, all w-engines three stars or more, all discs B or
-  better). `zzzcap live` takes `export`'s `--min-*` flags with `export`'s
-  defaults; `--min-agent-rarity 0` and its siblings at `0` send the whole
-  account. The GUI has no floor controls and uses the defaults.
-  `--no-agents` / `--no-discs` / `--no-engines` are a different thing:
-  they make the whole category absent, which leaves the site's records alone.
+* **The five filters apply.** The payload is filtered exactly like a file
+  export, in `zzzcap live` and in the GUI. `--no-agents` / `--no-discs` /
+  `--no-engines` make the whole category absent, which leaves the site's records
+  alone. The two equip-status switches instead omit `location` (and, for
+  w-engines, the agents' `wengineKey`/`wenginePhase`), so the optimizer sees the
+  items as unequipped on the next snapshot that still has records in that
+  category.
 * **An empty category is absent, never `[]`.** An empty list means "everything was
   deleted"; an absent one means "nothing to say", which the site leaves alone.
   This is the state at the start of a session, before the load responses land.
@@ -456,7 +454,7 @@ the account becomes, and that shapes how a live payload is built:
 
 `--out <path>` keeps a ZOD JSON file next to the feed:
 the bytes `zzzcap export` would write for what has been captured so far,
-floors and `--no-*` flags included,
+filters and `--no-*` flags included,
 so a category that is switched on but empty is written as `[]` there.
 It is replaced atomically whenever the payload changes
 (written to `<path>.tmp` and renamed over `<path>`),
@@ -472,12 +470,12 @@ and two sessions must not share one `--out` path.
 login and pulls the payload over a socket, asserting the account arrives whole
 (1393 discs, 342 w-engines, 48 agents) and that `--no-engines` produces a payload
 with no `wengines` key at all.
-It also serves the dump with `--min-agent-rarity 5 --min-disc-rarity 5`
+It also serves the dump with `--no-disc-equip-status --no-engine-equip-status`
 and asserts that the payload has as many records per category
 as `zzzcap export` writes with the same flags,
-and fewer agents and discs than with every floor at `0`.
+and that no `location` or `wengineKey`/`wenginePhase` key survives.
 Finally it runs `zzzcap live --seconds 1 --out` to completion
-with no flags, with `--no-engines` and with those two floors,
+with no flags, with `--no-engines` and with those two equip-status flags,
 and asserts that each file is byte for byte what `zzzcap export` writes
 with the same flags.
 
@@ -504,7 +502,8 @@ cargo run -p zzz-gui --release
 ```
 
 Same layout as the reference — region picker, start/stop, the live-export
-toggle, the three sync checkboxes — plus a right-hand **console** panel that the
+toggle, the five sync filters (discs, agents, w-engines, disc equip status,
+w-engine equip status) — plus a right-hand **console** panel that the
 reference never had: every disc added, w-engine equipped or unequipped (by
 agent name), and removal is logged with real names as the capture sees it. The
 change log is a ring buffer, so an all-night session cannot grow it without
@@ -512,8 +511,8 @@ bound.
 
 `zzz-gui` runs the `zzz-session` pipeline; `zzzcap live` has its own in
 `zzz-cli`. Both build their payload with `Izod::for_live`, so they apply the same
-payload rules. The GUI has no floor controls and passes the default floors to
-both its live export and its "Copy ZOD JSON". On Linux it uses X11 or Wayland and
+payload rules. The GUI passes the same five filters to both its live export and
+its "Copy ZOD JSON". On Linux it uses X11 or Wayland and
 needs the usual GL/desktop runtime; the release workflow installs the build
 dependencies (`libxkbcommon-dev`, `libwayland-dev`, `libx11-dev`,
 `libgl1-mesa-dev`).

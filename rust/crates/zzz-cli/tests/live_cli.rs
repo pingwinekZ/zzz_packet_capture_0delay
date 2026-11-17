@@ -23,7 +23,7 @@ const ASSETS: &str = "../../../assets";
 /// using that one while this runs.
 const PORT: u16 = 23413;
 const OTHER_PORT: u16 = 23414;
-const FLOOR_PORT: u16 = 23415;
+const EQUIP_PORT: u16 = 23415;
 const FILE_PORTS: [u16; 3] = [23416, 23417, 23418];
 
 /// How long a client waits for the server to answer, and for the payload that
@@ -231,8 +231,8 @@ fn the_recorded_login_is_served_as_a_zod_snapshot() {
     );
 
     // The region is detected from the capture, so the payload arrives without any
-    // region argument — and the account arrives whole, because the default floors
-    // filter nothing on current data. Snapshots arrive as the capture grows
+    // region argument — and the account arrives whole, because every filter
+    // defaults to on. Snapshots arrive as the capture grows
     // (the load responses land in different messages), so this waits for the one
     // that has everything.
     let snapshot = client.snapshot_where(|json| {
@@ -298,45 +298,39 @@ fn a_switched_off_category_is_absent_from_the_payload() {
 }
 
 #[test]
-fn the_floors_apply_to_the_payload() {
+fn the_equip_status_filters_reach_the_payload() {
     let Some(dump) = recorded_dump() else {
         return;
     };
-    let floors = ["--min-agent-rarity", "5", "--min-disc-rarity", "5"];
-    let expected = export(&dump, &floors);
-    let unfiltered = export(
-        &dump,
-        &[
-            "--min-agent-rarity",
-            "0",
-            "--min-agent-level",
-            "0",
-            "--min-disc-rarity",
-            "0",
-            "--min-disc-level",
-            "0",
-            "--min-engine-rarity",
-            "0",
-            "--min-engine-level",
-            "0",
-        ],
-    );
-    // Without this the test would pass for a server that ignores the floors.
-    for category in ["characters", "discs"] {
-        assert!(
-            length(&expected, category) < length(&unfiltered, category),
-            "the floors remove no {category} from this recording"
-        );
-    }
+    let flags = ["--no-disc-equip-status", "--no-engine-equip-status"];
+    // The same flags through the file export, so the test proves the filter is
+    // not a no-op and does not depend on the recording's equipped counts.
+    let expected = export(&dump, &flags);
+    let no_key = |items: &serde_json::Value, key: &str| {
+        items
+            .as_array()
+            .expect("the category is present")
+            .iter()
+            .all(|item| item.get(key).is_none())
+    };
+    assert!(no_key(&expected["discs"], "location"));
+    assert!(no_key(&expected["wengines"], "location"));
+    assert!(no_key(&expected["characters"], "wengineKey"));
+    assert!(no_key(&expected["characters"], "wenginePhase"));
 
-    let _server = serve(&dump, FLOOR_PORT, &floors);
-    let mut client = Client::wait_for(FLOOR_PORT);
+    let _server = serve(&dump, EQUIP_PORT, &flags);
+    let mut client = Client::wait_for(EQUIP_PORT);
     client.handshake();
-    client.snapshot_where(|json| {
+    let snapshot = client.snapshot_where(|json| {
         ["characters", "discs", "wengines"]
             .iter()
             .all(|category| length(json, category) == length(&expected, category))
     });
+
+    assert!(no_key(&snapshot["discs"], "location"));
+    assert!(no_key(&snapshot["wengines"], "location"));
+    assert!(no_key(&snapshot["characters"], "wengineKey"));
+    assert!(no_key(&snapshot["characters"], "wenginePhase"));
 }
 
 #[test]
@@ -347,9 +341,9 @@ fn the_out_file_is_what_export_writes() {
     let cases: [&[&str]; 3] = [
         &[],
         &["--no-engines"],
-        // A floor that removes records from the recording, so this proves the
-        // floors reach the file and not only the payload.
-        &["--min-agent-rarity", "5", "--min-disc-rarity", "5"],
+        // An equip-status filter changes the bytes, so this proves the toggle
+        // reaches the file and not only the payload.
+        &["--no-disc-equip-status", "--no-engine-equip-status"],
     ];
     for (port, flags) in FILE_PORTS.into_iter().zip(cases) {
         let scratch = Scratch::new(&format!("live-out-{port}"));

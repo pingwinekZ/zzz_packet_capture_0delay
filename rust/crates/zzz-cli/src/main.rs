@@ -139,9 +139,8 @@ enum Command {
     /// capture has nothing for are left out of the payload rather than sent
     /// empty, because the optimizer's import replaces what it has.
     ///
-    /// The floors apply as they do for `export`, with the same flags and
-    /// defaults, so a record below a floor disappears from the optimizer on
-    /// the next snapshot.
+    /// The category and equip-status filters apply as they do for `export`,
+    /// with the same flags and defaults.
     Live {
         /// Directory holding `datamine.json` and `nap.json`.
         #[arg(long, default_value = "../assets")]
@@ -191,26 +190,6 @@ enum Command {
 // that flatten this.
 #[derive(Args)]
 struct SelectionArgs {
-    /// Lowest agent rarity to write, counted in stars (the default of 4
-    /// leaves out the game's three-star agents).
-    #[arg(long, default_value_t = 4)]
-    min_agent_rarity: u8,
-    /// Raise to leave out agents that were captured but never levelled.
-    #[arg(long, default_value_t = 0)]
-    min_agent_level: u8,
-    /// Lowest disc rarity to write, as the band the game encodes in the disc
-    /// id: 3, 4 and 5 are the export's B, A and S.
-    #[arg(long, default_value_t = 3)]
-    min_disc_rarity: u8,
-    /// Raise to leave out under-levelled discs.
-    #[arg(long, default_value_t = 0)]
-    min_disc_level: u8,
-    /// Lowest w-engine rarity to write, counted in stars.
-    #[arg(long, default_value_t = 3)]
-    min_engine_rarity: u8,
-    /// Raise to leave out w-engines that were captured but never levelled.
-    #[arg(long, default_value_t = 0)]
-    min_engine_level: u8,
     /// Leave a category out entirely, rather than writing it empty. The site
     /// reads an absent list as "keep what was imported last time".
     #[arg(long)]
@@ -221,20 +200,23 @@ struct SelectionArgs {
     /// As `--no-agents`, for w-engines.
     #[arg(long)]
     no_engines: bool,
+    /// Omit each disc's `location`, so the site sees every disc as unequipped.
+    #[arg(long)]
+    no_disc_equip_status: bool,
+    /// Omit the w-engine equip link: each engine's `location` and each agent's
+    /// `wengineKey`/`wenginePhase`.
+    #[arg(long)]
+    no_engine_equip_status: bool,
 }
 
 impl From<&SelectionArgs> for ExportSettings {
     fn from(selection: &SelectionArgs) -> Self {
         Self {
-            min_agent_rarity: selection.min_agent_rarity,
-            min_agent_level: selection.min_agent_level,
-            min_disc_rarity: selection.min_disc_rarity,
-            min_disc_level: selection.min_disc_level,
-            min_engine_rarity: selection.min_engine_rarity,
-            min_engine_level: selection.min_engine_level,
             export_agents: !selection.no_agents,
             export_discs: !selection.no_discs,
             export_engines: !selection.no_engines,
+            export_disc_equip_status: !selection.no_disc_equip_status,
+            export_engine_equip_status: !selection.no_engine_equip_status,
         }
     }
 }
@@ -1045,7 +1027,7 @@ fn hex_preview(bytes: &[u8]) -> String {
 /// the nanoka tables do not have — better to find that out here, with the rest
 /// of the diagnosis, than at the moment you try to import the file.
 fn report_export(data: &GameData, scanner: &Scanner<'_>) {
-    println!("\nExport (this is what `zzzcap export` would write with its default floors)");
+    println!("\nExport (this is what `zzzcap export` would write with its default filters)");
     match Izod::from_inventory(
         scanner.inventory(),
         &NanokaNames(&data.nanoka),
@@ -1144,8 +1126,8 @@ fn export(
         }
     }
     // "written of captured" per category, or a plain note when the category was
-    // switched off: a floor that dropped records has to be visible, and "0
-    // agents" would read as an empty account rather than as `--no-agents`.
+    // switched off: "0 agents" would read as an empty account rather than as
+    // `--no-agents`.
     let category = |name: &str, written: Option<usize>, captured: usize| match written {
         Some(count) => format!("{count} of {captured} {name}"),
         None => format!("{name} not exported"),
@@ -1232,9 +1214,8 @@ struct LiveOptions<'a> {
 /// The port and the payload are the reference's: the server comes from
 /// `websocketServer.hpp`, and each snapshot is `makeLiveZodJson` — see
 /// [`Izod::for_live`] for the rule that makes a live payload different from a
-/// written one. The floors and category toggles in `options.settings` are the
-/// ones `export` takes, and they apply to the payload the same way: a record
-/// below a floor disappears from the optimizer on the next snapshot.
+/// written one. The category and equip-status toggles in `options.settings` are
+/// the ones `export` takes, and they apply to the payload the same way.
 ///
 /// With `options.out`, the file `export` would write is kept next to the feed,
 /// built from the same settings and rewritten whenever the payload changes.
@@ -1278,6 +1259,22 @@ fn live(options: LiveOptions<'_>) -> Result<(), String> {
             },
             if settings.export_agents {
                 "agents"
+            } else {
+                "-"
+            },
+        ]
+        .join(" ")
+    );
+    println!(
+        "  equip links: {}",
+        [
+            if settings.export_disc_equip_status {
+                "discs"
+            } else {
+                "-"
+            },
+            if settings.export_engine_equip_status {
+                "w-engines"
             } else {
                 "-"
             },

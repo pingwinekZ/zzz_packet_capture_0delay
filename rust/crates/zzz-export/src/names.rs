@@ -1,4 +1,4 @@
-//! The name and rarity lookups the export needs, behind a trait.
+//! The name lookups the export needs, behind a trait.
 //!
 //! The reference reads them from the `NanokaData` singleton, which fetches from
 //! `static.nanoka.cc` and *throws* for an id the published tables do not have.
@@ -8,16 +8,12 @@
 
 use zzz_gamedata::NanokaData;
 
-/// Display names and rarities, keyed by the ids that appear in packets.
+/// Display names, keyed by the ids that appear in packets.
 pub trait Names {
     /// The agent's English name.
     fn character_name(&self, id: u32) -> Option<&str>;
-    /// The agent's star rating, already `rank + 1`.
-    fn character_rarity(&self, id: u32) -> Option<u32>;
     /// The w-engine's English name.
     fn weapon_name(&self, id: u32) -> Option<&str>;
-    /// The w-engine's star rating, already `rank + 1`.
-    fn weapon_rarity(&self, id: u32) -> Option<u32>;
     /// The disc set's English name, keyed by the set id (`id / 100 * 100`).
     fn equipment_name(&self, set_id: u32) -> Option<&str>;
 }
@@ -31,16 +27,8 @@ impl Names for NanokaNames<'_> {
         self.0.character_name(id)
     }
 
-    fn character_rarity(&self, id: u32) -> Option<u32> {
-        self.0.character_rarity(id)
-    }
-
     fn weapon_name(&self, id: u32) -> Option<&str> {
         self.0.weapon_name(id)
-    }
-
-    fn weapon_rarity(&self, id: u32) -> Option<u32> {
-        self.0.weapon_rarity(id)
     }
 
     fn equipment_name(&self, set_id: u32) -> Option<&str> {

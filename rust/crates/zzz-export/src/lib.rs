@@ -1,12 +1,18 @@
 //! ZOD export — the JSON an optimizer imports, ported from
 //! `src/serialization/zod/`.
 //!
-//! Three layers, in the order the reference applies them:
+//! Three layers, in the order they apply:
 //!
-//! 1. [`ExportSettings`] decides what is written at all.
-//! 2. [`Izod::from_inventory`] filters the captured inventory and converts each
-//!    record into its export shape (`IAgent::fromInstance` and friends).
+//! 1. [`ExportSettings`] decides what is written at all — the three category
+//!    toggles and the two equip-status toggles.
+//! 2. [`Izod::from_inventory`] converts each captured record into its export
+//!    shape (`IAgent::fromInstance` and friends).
 //! 3. [`Izod::to_json`] serializes it.
+//!
+//! This port deliberately drops the reference's rarity and level floors:
+//! everything captured is exported unless a category or its equip link is
+//! switched off. The reference still has them, so the parity fixtures are chosen
+//! so that no record would have been filtered anyway.
 //!
 //! Layer 3 is hand-written rather than delegated to `serde_json`, and that is
 //! the one thing worth understanding before changing anything here. The

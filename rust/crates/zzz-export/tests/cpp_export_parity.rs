@@ -6,12 +6,14 @@
 //! two goldens beside this test are its output:
 //!
 //! * `zod_export.json` — the inventory decoded from `rust/login_capture.json`,
-//!   exported with every floor at zero so the comparison covers all 1393 discs,
-//!   342 w-engines and 48 agents rather than the slice a filter would keep.
+//!   exported with the reference's every floor at zero so the comparison covers
+//!   all 1393 discs, 342 w-engines and 48 agents rather than the slice a filter
+//!   would keep.
 //! * `zod_edge_export.json` — a small synthetic inventory exported with the
-//!   *default* settings, which is where the filters, the padded substat slots,
-//!   the w-engine that never arrived and the disc below the rarity floor are
-//!   exercised.
+//!   reference's *default* settings, which is where the padded substat slots and
+//!   the w-engine that never arrived are exercised. This port no longer has
+//!   rarity or level floors, so the fixture contains no record the reference
+//!   would have filtered; that keeps both sides on the same input.
 //!
 //! Both files were produced by that harness reading `zod_inventory.json` and
 //! `zod_edge_inventory.json`, which are committed next to them. Regenerating
@@ -145,9 +147,8 @@ fn intermediate(inventory: &Inventory) -> String {
 
 /// A small inventory that reaches the corners the real capture does not: an
 /// agent wearing a w-engine that is not in the list, an agent wearing one that
-/// is, an unequipped w-engine, a dressed and a bagged disc, a disc below the
-/// default rarity floor, and substats both shorter and longer than the four
-/// slots the reference writes.
+/// is, an unequipped w-engine, a dressed and a bagged disc, and substats both
+/// shorter and longer than the four slots the reference writes.
 ///
 /// The ids are real ones — 1011 Anby, 1021 Nekomata, 12001 `[Lunar] Pleniluna`,
 /// set 31300 — because the C++ side looks the names up in
@@ -242,10 +243,6 @@ fn edge_inventory() -> Inventory {
                     stat(30502, 120, 0),
                 ],
             ),
-            // Rarity band 1, below the default floor of 3: the default settings
-            // must drop it before the export reaches `keyRarity`, which has no
-            // letter for it.
-            disc(903, 31301, 15, vec![]),
         ],
     }
 }
@@ -331,9 +328,9 @@ fn the_edge_cases_export_the_reference_bytes() {
     assert_eq!(characters[1].wengine_phase, Some(1));
 
     let discs = zod.discs.expect("discs are exported");
-    assert_eq!(discs.len(), 2, "the rarity-band-1 disc is filtered out");
-    assert_eq!(discs[0].location, "Anby");
-    assert_eq!(discs[1].location, "", "never dressed");
+    assert_eq!(discs.len(), 2);
+    assert_eq!(discs[0].location.as_deref(), Some("Anby"));
+    assert_eq!(discs[1].location.as_deref(), Some(""), "never dressed");
     assert!(
         discs.iter().all(|disc| disc.substats.len() == 4),
         "the reference always writes four substat slots"
@@ -342,13 +339,14 @@ fn the_edge_cases_export_the_reference_bytes() {
 
     let engines = zod.wengines.expect("w-engines are exported");
     assert_eq!(engines.len(), 2);
-    assert_eq!(engines[0].location, "Anby");
+    assert_eq!(engines[0].location.as_deref(), Some("Anby"));
     assert_eq!(engines[0].id, "zzz_wengine_12001");
-    assert_eq!(engines[1].location, "", "in the bag");
+    assert_eq!(engines[1].location.as_deref(), Some(""), "in the bag");
 }
 
 /// The recorded capture's inventory, against the reference with every floor at
-/// zero.
+/// zero — the same records this port writes by default now that its floors are
+/// gone.
 #[test]
 fn the_recorded_capture_exports_the_reference_bytes() {
     let golden = parity_path("zod_export.json");
@@ -448,7 +446,7 @@ fn the_recorded_capture_exports_the_reference_bytes() {
     assert_same_bytes(
         "zod_export.json",
         &expected,
-        &export(&committed, &ExportSettings::unfiltered()).expect("names are present"),
+        &export(&committed, &ExportSettings::default()).expect("names are present"),
     );
 
     // When the dump is here too, the intermediate has to be what the pipeline

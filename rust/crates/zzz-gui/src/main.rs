@@ -891,6 +891,14 @@ impl App {
         ui.checkbox(&mut self.settings.export_discs, "Discs");
         ui.checkbox(&mut self.settings.export_engines, "W-engines");
         ui.checkbox(&mut self.settings.export_agents, "Agents");
+        ui.checkbox(
+            &mut self.settings.export_disc_equip_status,
+            "Disc equip status",
+        );
+        ui.checkbox(
+            &mut self.settings.export_engine_equip_status,
+            "W-engine equip status",
+        );
         // While capturing the worker owns a copy; mirror the toggles into it
         // so they apply to the next snapshot without a restart.
         if let Some(live) = &self.live_settings {

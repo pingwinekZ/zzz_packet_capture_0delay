@@ -1,56 +1,33 @@
-//! `data::ExportSettings` — which parts of the inventory to write, and the
-//! floors below which a record is left out.
+//! `data::ExportSettings` — which parts of the inventory are written.
+//!
+//! There are two kinds of switch here. The three `export_*` fields select a
+//! whole category: off means the key is absent from the JSON, which the site
+//! reads as "keep what was imported last time". The two `*_equip_status` fields
+//! decide whether an item's equip link is written at all: off means the
+//! `location` key is omitted, so the site sees the item as unequipped.
 
-/// `data::ExportSettings`.
-///
-/// The defaults are the reference's, and the two rarity floors are worth noting
-/// because they mean different things in different filters:
-///
-/// * `min_disc_rarity` is compared against the rarity decoded from the disc id
-///   (`3`/`4`/`5`), the same band `keyRarity` has letters for.
-/// * `min_agent_rarity` and `min_engine_rarity` are compared against the nanoka
-///   rank *plus one*, so a five-star agent has rarity 5.
+/// `data::ExportSettings`, reduced to the five filters this port offers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExportSettings {
-    pub min_disc_rarity: u8,
-    pub min_disc_level: u8,
-    pub min_engine_rarity: u8,
-    pub min_engine_level: u8,
-    pub min_agent_rarity: u8,
-    pub min_agent_level: u8,
     pub export_discs: bool,
     pub export_agents: bool,
     pub export_engines: bool,
+    /// Write each disc's `location` — the agent wearing it, or `""` in the bag.
+    /// Off omits the key, so the site sees every disc as unequipped.
+    pub export_disc_equip_status: bool,
+    /// Write each w-engine's `location`, and each agent's `wengineKey` /
+    /// `wenginePhase`. Off omits all three, so the site sees no equip links.
+    pub export_engine_equip_status: bool,
 }
 
 impl Default for ExportSettings {
     fn default() -> Self {
         Self {
-            min_disc_rarity: 3,
-            min_disc_level: 0,
-            min_engine_rarity: 3,
-            min_engine_level: 0,
-            min_agent_rarity: 4,
-            min_agent_level: 0,
             export_discs: true,
             export_agents: true,
             export_engines: true,
-        }
-    }
-}
-
-impl ExportSettings {
-    /// Everything, with no floors at all. Useful for a parity run, where the
-    /// point is to compare every record rather than a plausible slice of them.
-    pub fn unfiltered() -> Self {
-        Self {
-            min_disc_rarity: 0,
-            min_disc_level: 0,
-            min_engine_rarity: 0,
-            min_engine_level: 0,
-            min_agent_rarity: 0,
-            min_agent_level: 0,
-            ..Self::default()
+            export_disc_equip_status: true,
+            export_engine_equip_status: true,
         }
     }
 }
@@ -60,15 +37,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_match_the_cpp_header() {
+    fn every_filter_is_on_by_default() {
         let settings = ExportSettings::default();
-        assert_eq!(settings.min_disc_rarity, 3);
-        assert_eq!(settings.min_disc_level, 0);
-        assert_eq!(settings.min_engine_rarity, 3);
-        assert_eq!(settings.min_engine_level, 0);
-        // Four stars and up by default: this is the one floor that is not zero.
-        assert_eq!(settings.min_agent_rarity, 4);
-        assert_eq!(settings.min_agent_level, 0);
-        assert!(settings.export_discs && settings.export_agents && settings.export_engines);
+        assert!(settings.export_discs);
+        assert!(settings.export_agents);
+        assert!(settings.export_engines);
+        assert!(settings.export_disc_equip_status);
+        assert!(settings.export_engine_equip_status);
     }
 }

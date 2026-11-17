@@ -50,8 +50,9 @@ pub struct IDisc {
     pub level: u8,
     pub rarity: String,
     pub main_stat_key: String,
-    /// The agent wearing it, or empty when it is in the bag.
-    pub location: String,
+    /// The agent wearing it, or empty when it is in the bag. `None` when the
+    /// disc equip-status filter is off; the key is then absent from the JSON.
+    pub location: Option<String>,
     pub lock: bool,
     pub trash: bool,
     pub substats: Vec<ISubstat>,
@@ -64,8 +65,9 @@ pub struct IEngine {
     pub level: u8,
     pub modification: u8,
     pub phase: u8,
-    /// The agent wearing it, or empty when it is in the bag.
-    pub location: String,
+    /// The agent wearing it, or empty when it is in the bag. `None` when the
+    /// w-engine equip-status filter is off; the key is then absent from the JSON.
+    pub location: Option<String>,
     pub lock: bool,
     /// The uid the game knows it by, e.g. `zzz_wengine_15031`.
     pub id: String,
@@ -205,11 +207,11 @@ impl Default for Izod {
 }
 
 impl Izod {
-    /// `IZOD::fromPcap`.
+    /// `IZOD::fromPcap`, with the reference's rarity and level floors removed.
     ///
-    /// The two maps are built first, over *every* agent and engine, before any
-    /// filtering: the settings decide what is written, not what is known, so a
-    /// record the floors exclude can still be what another record points at.
+    /// The two owner maps are built first, over *every* agent, so an item can
+    /// name the agent wearing it even when the category that points at it is not
+    /// being written.
     ///
     /// Because those maps need each agent's name, an agent whose id nanoka has
     /// never heard of fails the export even when agents are not being exported.
@@ -239,26 +241,14 @@ impl Izod {
             .map(|engine| (engine.uid, engine))
             .collect();
 
+        // The agent's per-engine fields are part of the w-engine equip link, so
+        // they are written only when both the category and that link are on.
+        let engine_link = settings.export_engines && settings.export_engine_equip_status;
+
         let characters = if settings.export_agents {
             let mut out = Vec::new();
             for agent in &inventory.agents {
-                if agent.level < u32::from(settings.min_agent_level) {
-                    continue;
-                }
-                // An unknown rarity cannot be compared, and dropping the record
-                // would hide a brand-new agent. It is let through so the key
-                // lookup reports the id instead.
-                if let Some(rarity) = names.character_rarity(agent.id) {
-                    if rarity < u32::from(settings.min_agent_rarity) {
-                        continue;
-                    }
-                }
-                out.push(agent_export(
-                    agent,
-                    &engines_by_uid,
-                    names,
-                    settings.export_engines,
-                )?);
+                out.push(agent_export(agent, &engines_by_uid, names, engine_link)?);
             }
             Some(out)
         } else {
@@ -268,13 +258,12 @@ impl Izod {
         let discs = if settings.export_discs {
             let mut out = Vec::new();
             for disc in &inventory.discs {
-                if disc.level < u32::from(settings.min_disc_level) {
-                    continue;
-                }
-                if disc.rarity() < u32::from(settings.min_disc_rarity) {
-                    continue;
-                }
-                out.push(disc_export(disc, &disc_owner, names)?);
+                out.push(disc_export(
+                    disc,
+                    &disc_owner,
+                    names,
+                    settings.export_disc_equip_status,
+                )?);
             }
             Some(out)
         } else {
@@ -284,15 +273,12 @@ impl Izod {
         let wengines = if settings.export_engines {
             let mut out = Vec::new();
             for engine in &inventory.engines {
-                if engine.level < u32::from(settings.min_engine_level) {
-                    continue;
-                }
-                if let Some(rarity) = names.weapon_rarity(engine.id) {
-                    if rarity < u32::from(settings.min_engine_rarity) {
-                        continue;
-                    }
-                }
-                out.push(engine_export(engine, &engine_owner, names)?);
+                out.push(engine_export(
+                    engine,
+                    &engine_owner,
+                    names,
+                    settings.export_engine_equip_status,
+                )?);
             }
             Some(out)
         } else {
@@ -311,21 +297,21 @@ impl Izod {
 
     /// The payload a *live* client receives: `Home::State::makeLiveZodJson`.
     ///
-    /// The settings apply as they do for a file export, floors included, and
-    /// callers pass the same settings their file export uses. One rule separates
-    /// this from the file export, and it follows from the optimizer's import
-    /// being replace-semantics per category: whatever the payload says is what
-    /// the account becomes.
+    /// The settings apply as they do for a file export, and callers pass the
+    /// same settings their file export uses. One rule separates this from the
+    /// file export, and it follows from the optimizer's import being
+    /// replace-semantics per category: whatever the payload says is what the
+    /// account becomes.
     ///
     /// * **An empty category is `null`, never `[]`.** An empty list means
     ///   "everything was deleted"; an absent one means "nothing to say", which
     ///   the site leaves alone. This is the state at the start of a session,
     ///   before the load responses have arrived, and also the state of a
-    ///   category that the floors or the category toggles empty out.
+    ///   category that the category toggles or the capture leave empty.
     ///
-    /// Because of the same replace semantics, a floor removes every record below
-    /// it from the site's database on the next snapshot that still has records
-    /// in that category.
+    /// Because of the same replace semantics, switching an equip-status filter
+    /// off makes every item in that category arrive unequipped on the next
+    /// snapshot that still has records in it.
     ///
     /// Note that this makes the payload depend on what the capture has seen so
     /// far, not on what the account owns: a category the game has not sent yet is
@@ -401,7 +387,12 @@ impl IDisc {
             ("level", Some(json::number(self.level))),
             ("rarity", Some(json::string(&self.rarity))),
             ("mainStatKey", Some(json::string(&self.main_stat_key))),
-            ("location", Some(json::string(&self.location))),
+            (
+                "location",
+                self.location
+                    .as_ref()
+                    .map(|location| json::string(location)),
+            ),
             ("lock", Some(json::boolean(self.lock))),
             ("trash", Some(json::boolean(self.trash))),
             (
@@ -419,7 +410,12 @@ impl IEngine {
             ("level", Some(json::number(self.level))),
             ("modification", Some(json::number(self.modification))),
             ("phase", Some(json::number(self.phase))),
-            ("location", Some(json::string(&self.location))),
+            (
+                "location",
+                self.location
+                    .as_ref()
+                    .map(|location| json::string(location)),
+            ),
             ("lock", Some(json::boolean(self.lock))),
             ("id", Some(json::string(&self.id))),
         ])
@@ -467,7 +463,7 @@ fn agent_export(
     agent: &AgentInfo,
     engines: &BTreeMap<u32, &WeaponInfo>,
     names: &dyn Names,
-    export_engines: bool,
+    engine_link: bool,
 ) -> Result<IAgent, ExportError> {
     let key = to_zod_key(character_name(names, agent.id)?);
     let skill = |position: usize| -> Result<u32, ExportError> {
@@ -480,7 +476,7 @@ fn agent_export(
             })
     };
 
-    let (wengine_key, wengine_phase) = if export_engines {
+    let (wengine_key, wengine_phase) = if engine_link {
         match engines.get(&agent.weapon_uid) {
             Some(engine) => (
                 Some(to_zod_key(weapon_name(names, engine.id)?)),
@@ -523,6 +519,7 @@ fn disc_export(
     disc: &DiscInfo,
     owners: &BTreeMap<u32, String>,
     names: &dyn Names,
+    export_equip: bool,
 ) -> Result<IDisc, ExportError> {
     let set_id = disc.set_id();
     let set_name = names
@@ -557,7 +554,7 @@ fn disc_export(
         level: disc.level as u8,
         rarity: rarity_letter.to_string(),
         main_stat_key: main_stat_key.to_string(),
-        location: owners.get(&disc.uid).cloned().unwrap_or_default(),
+        location: export_equip.then(|| owners.get(&disc.uid).cloned().unwrap_or_default()),
         lock: disc.lock,
         trash: disc.trash,
         substats,
@@ -569,13 +566,14 @@ fn engine_export(
     engine: &WeaponInfo,
     owners: &BTreeMap<u32, String>,
     names: &dyn Names,
+    export_equip: bool,
 ) -> Result<IEngine, ExportError> {
     Ok(IEngine {
         key: to_zod_key(weapon_name(names, engine.id)?),
         level: engine.level as u8,
         modification: engine.modification as u8,
         phase: engine.phase as u8,
-        location: owners.get(&engine.uid).cloned().unwrap_or_default(),
+        location: export_equip.then(|| owners.get(&engine.uid).cloned().unwrap_or_default()),
         lock: false,
         id: format!("zzz_wengine_{}", engine.uid),
     })
@@ -591,26 +589,18 @@ mod tests {
     /// Names fixed in the test, so nothing here needs the nanoka cache.
     #[derive(Default)]
     struct FixedNames {
-        characters: BTreeMap<u32, (String, u32)>,
-        weapons: BTreeMap<u32, (String, u32)>,
+        characters: BTreeMap<u32, String>,
+        weapons: BTreeMap<u32, String>,
         equipment: BTreeMap<u32, String>,
     }
 
     impl Names for FixedNames {
         fn character_name(&self, id: u32) -> Option<&str> {
-            self.characters.get(&id).map(|(name, _)| name.as_str())
-        }
-
-        fn character_rarity(&self, id: u32) -> Option<u32> {
-            self.characters.get(&id).map(|(_, rarity)| *rarity)
+            self.characters.get(&id).map(String::as_str)
         }
 
         fn weapon_name(&self, id: u32) -> Option<&str> {
-            self.weapons.get(&id).map(|(name, _)| name.as_str())
-        }
-
-        fn weapon_rarity(&self, id: u32) -> Option<u32> {
-            self.weapons.get(&id).map(|(_, rarity)| *rarity)
+            self.weapons.get(&id).map(String::as_str)
         }
 
         fn equipment_name(&self, set_id: u32) -> Option<&str> {
@@ -622,21 +612,13 @@ mod tests {
     /// `writes_the_bytes_the_reference_wrote` was captured.
     fn reference_names() -> FixedNames {
         let mut names = FixedNames::default();
-        names.characters.insert(1011, ("Anby".into(), 4));
-        names.characters.insert(1581, ("Yixuan".into(), 5));
-        names.weapons.insert(25, ("[Lunar] Pleniluna".into(), 4));
-        names.weapons.insert(15031, ("Deep Sea Visitor".into(), 5));
+        names.characters.insert(1011, "Anby".into());
+        names.characters.insert(1581, "Yixuan".into());
+        names.weapons.insert(25, "[Lunar] Pleniluna".into());
+        names.weapons.insert(15031, "Deep Sea Visitor".into());
         names.equipment.insert(31300, "Woodpecker Electro".into());
         names.equipment.insert(31200, "Feathered Fate".into());
         names
-    }
-
-    fn agent(id: u32, level: u32) -> AgentInfo {
-        AgentInfo {
-            id,
-            level,
-            ..AgentInfo::default()
-        }
     }
 
     /// The shape and field order the reference writes, pinned without a
@@ -701,7 +683,7 @@ mod tests {
             }],
         };
 
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         assert_eq!(
             zod.to_json(),
             concat!(
@@ -774,7 +756,7 @@ mod tests {
             }],
             ..Inventory::default()
         };
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         let agent = &zod.characters.unwrap()[0];
         assert_eq!(agent.wengine_key.as_deref(), Some(""));
         assert_eq!(agent.wengine_phase, Some(1));
@@ -782,7 +764,7 @@ mod tests {
         // With w-engines not exported at all the fields are omitted instead.
         let settings = ExportSettings {
             export_engines: false,
-            ..ExportSettings::unfiltered()
+            ..ExportSettings::default()
         };
         let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
         let agent = &zod.characters.unwrap()[0];
@@ -818,7 +800,7 @@ mod tests {
             }],
             ..Inventory::default()
         };
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         let agent = &zod.characters.unwrap()[0];
         assert_eq!(agent.level, 44);
         assert_eq!(agent.promotion, 255);
@@ -865,7 +847,7 @@ mod tests {
             ],
             ..Inventory::default()
         };
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         let discs = zod.discs.unwrap();
 
         assert_eq!(discs[0].substats.len(), 4);
@@ -886,10 +868,22 @@ mod tests {
     }
 
     #[test]
-    fn the_floors_keep_and_drop_what_they_should() {
+    fn the_equip_status_filters_drop_the_location_key() {
         let names = reference_names();
         let mut inventory = Inventory {
-            agents: vec![agent(1011, 60), agent(1581, 1)],
+            agents: vec![AgentInfo {
+                id: 1011,
+                level: 60,
+                weapon_uid: 25,
+                skills: (0..6)
+                    .map(|kind| AvatarSkillLevel {
+                        skill_type: kind,
+                        level: 1,
+                    })
+                    .collect(),
+                dressed_equips: vec![DressedEquip { uid: 1, slot: 1 }],
+                ..AgentInfo::default()
+            }],
             engines: vec![
                 WeaponInfo {
                     id: 25,
@@ -897,10 +891,11 @@ mod tests {
                     level: 60,
                     ..WeaponInfo::default()
                 },
+                // In the bag: no agent names it.
                 WeaponInfo {
-                    id: 15031,
-                    uid: 15031,
-                    level: 0,
+                    id: 25,
+                    uid: 26,
+                    level: 60,
                     ..WeaponInfo::default()
                 },
             ],
@@ -918,7 +913,7 @@ mod tests {
                 DiscInfo {
                     uid: 2,
                     id: 31341,
-                    level: 3,
+                    level: 15,
                     main_stat: DiscStat {
                         key: 11103,
                         ..DiscStat::default()
@@ -927,72 +922,69 @@ mod tests {
                 },
             ],
         };
-        for agent in &mut inventory.agents {
-            agent.skills = (0..6)
+        // A second agent so the owner maps are populated in a predictable order.
+        inventory.agents.push(AgentInfo {
+            id: 1581,
+            level: 1,
+            skills: (0..6)
                 .map(|kind| AvatarSkillLevel {
                     skill_type: kind,
                     level: 1,
                 })
-                .collect();
-        }
+                .collect(),
+            ..AgentInfo::default()
+        });
 
-        // Every level floor defaults to 0 and every rarity floor to three stars
-        // or the band it names, so with the defaults nothing here is dropped.
+        // Default: both equip links are written. An unequipped item carries an
+        // empty location rather than an absent one.
         let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
-        assert_eq!(zod.characters.as_ref().unwrap().len(), 2);
-        assert_eq!(zod.discs.as_ref().unwrap().len(), 2);
-        assert_eq!(zod.wengines.as_ref().unwrap().len(), 2);
+        let discs = zod.discs.unwrap();
+        assert_eq!(discs[0].location.as_deref(), Some("Anby"));
+        assert_eq!(discs[1].location.as_deref(), Some(""), "in the bag");
+        let engines = zod.wengines.unwrap();
+        assert_eq!(engines[0].location.as_deref(), Some("Anby"));
+        assert_eq!(engines[1].location.as_deref(), Some(""), "in the bag");
 
-        // A disc level floor takes the level-3 one, leaving the level-15 disc.
+        // Disc equip status off: every disc loses the key. The engine side is
+        // unaffected, and the rest of the disc record is still exported.
         let settings = ExportSettings {
-            min_disc_level: 5,
+            export_disc_equip_status: false,
             ..ExportSettings::default()
         };
         let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
         let discs = zod.discs.unwrap();
-        assert_eq!(discs.len(), 1);
-        assert_eq!(discs[0].level, 15);
+        assert!(discs.iter().all(|disc| disc.location.is_none()));
+        assert_eq!(discs[0].set_key, "WoodpeckerElectro");
+        assert_eq!(zod.wengines.unwrap()[0].location.as_deref(), Some("Anby"));
 
-        // A five-star floor takes the four-star agent with it.
+        // W-engine equip status off: the engine locations and the per-agent
+        // w-engine fields all go, because together they are the equip link.
         let settings = ExportSettings {
-            min_agent_rarity: 5,
+            export_engine_equip_status: false,
             ..ExportSettings::default()
         };
         let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
-        let characters = zod.characters.unwrap();
-        assert_eq!(characters.len(), 1);
-        assert_eq!(characters[0].id, "Yixuan");
-
-        // And a level floor takes the one that never levelled.
-        let settings = ExportSettings {
-            min_agent_level: 2,
-            ..ExportSettings::default()
-        };
-        let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
-        assert_eq!(zod.characters.unwrap()[0].id, "Anby");
-
-        // An engine level floor takes the unlevelled one.
-        let settings = ExportSettings {
-            min_engine_level: 1,
-            ..ExportSettings::default()
-        };
-        let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
-        assert_eq!(zod.wengines.unwrap().len(), 1);
-
-        // A rarity floor above what a disc can be drops all of them.
-        let settings = ExportSettings {
-            min_disc_rarity: 6,
-            ..ExportSettings::default()
-        };
-        let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
-        assert!(zod.discs.unwrap().is_empty());
+        assert!(zod
+            .wengines
+            .as_ref()
+            .unwrap()
+            .iter()
+            .all(|engine| engine.location.is_none()));
+        let agent = &zod.characters.as_ref().unwrap()[0];
+        assert_eq!(agent.wengine_key, None);
+        assert_eq!(agent.wengine_phase, None);
+        assert!(!agent.to_json().contains("wengineKey"));
+        let engine = &zod.wengines.as_ref().unwrap()[0];
+        assert!(!engine.to_json().contains("location"));
+        // The disc equip link is untouched by the w-engine switch.
+        assert!(zod.to_json().contains("\"location\":\"Anby\""));
     }
 
     #[test]
-    fn the_maps_are_built_before_the_filtering() {
-        // An engine worn by an agent the agent floor excludes still has to come
-        // out with that agent as its location: `IZOD::fromPcap` fills both maps
-        // from the unfiltered inventory.
+    fn the_maps_are_built_before_the_categories_are_chosen() {
+        // An engine worn by an agent that is not being exported still has to come
+        // out with that agent as its location: the owner map is filled from the
+        // whole inventory.
         let names = reference_names();
         let mut inventory = Inventory {
             agents: vec![AgentInfo {
@@ -1016,17 +1008,17 @@ mod tests {
             ..Inventory::default()
         };
         let settings = ExportSettings {
-            min_agent_level: 60,
-            ..ExportSettings::unfiltered()
+            export_agents: false,
+            ..ExportSettings::default()
         };
         let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
         assert!(
-            zod.characters.unwrap().is_empty(),
-            "the agent is filtered out"
+            zod.characters.is_none(),
+            "the agent category is switched off"
         );
-        assert_eq!(zod.wengines.unwrap()[0].location, "Anby");
+        assert_eq!(zod.wengines.unwrap()[0].location.as_deref(), Some("Anby"));
 
-        // And an unequipped engine has no location at all.
+        // And an unequipped engine has an empty location rather than a name.
         inventory.engines.push(WeaponInfo {
             id: 25,
             uid: 26,
@@ -1035,8 +1027,8 @@ mod tests {
         });
         let zod = Izod::from_inventory(&inventory, &names, &settings).unwrap();
         let engines = zod.wengines.unwrap();
-        assert_eq!(engines[0].location, "Anby");
-        assert_eq!(engines[1].location, "");
+        assert_eq!(engines[0].location.as_deref(), Some("Anby"));
+        assert_eq!(engines[1].location.as_deref(), Some(""));
     }
 
     #[test]
@@ -1082,10 +1074,14 @@ mod tests {
             ],
             ..Inventory::default()
         };
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         let discs = zod.discs.unwrap();
-        assert_eq!(discs[0].location, "Anby");
-        assert_eq!(discs[1].location, "", "never dressed, so nowhere to be");
+        assert_eq!(discs[0].location.as_deref(), Some("Anby"));
+        assert_eq!(
+            discs[1].location.as_deref(),
+            Some(""),
+            "never dressed, so nowhere to be"
+        );
     }
 
     #[test]
@@ -1105,7 +1101,7 @@ mod tests {
             }],
             ..Inventory::default()
         };
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         let disc = &zod.discs.as_ref().unwrap()[0];
         assert!(disc.lock);
         assert!(disc.trash);
@@ -1158,7 +1154,7 @@ mod tests {
             ..Inventory::default()
         };
         assert_eq!(
-            Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap_err(),
+            Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap_err(),
             ExportError::UnknownWeapon { id: 9999 }
         );
 
@@ -1175,7 +1171,7 @@ mod tests {
             ..Inventory::default()
         };
         assert_eq!(
-            Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap_err(),
+            Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap_err(),
             ExportError::UnknownEquipment { set_id: 31900 }
         );
     }
@@ -1196,7 +1192,7 @@ mod tests {
             ..Inventory::default()
         };
         assert_eq!(
-            Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap_err(),
+            Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap_err(),
             ExportError::UnknownStat { key: 424242 }
         );
 
@@ -1219,7 +1215,7 @@ mod tests {
             ..Inventory::default()
         };
         assert_eq!(
-            Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap_err(),
+            Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap_err(),
             ExportError::UnknownStat { key: 424242 }
         );
 
@@ -1238,7 +1234,7 @@ mod tests {
             ..Inventory::default()
         };
         assert_eq!(
-            Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap_err(),
+            Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap_err(),
             ExportError::UnmappedRarity { rarity: 1 }
         );
     }
@@ -1263,7 +1259,7 @@ mod tests {
             ..Inventory::default()
         };
         let error =
-            Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap_err();
+            Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap_err();
         assert_eq!(
             error,
             ExportError::MissingSkill {
@@ -1276,55 +1272,23 @@ mod tests {
     }
 
     #[test]
-    fn the_live_payload_applies_the_floors() {
+    fn a_live_payload_nulls_a_category_the_capture_empty_out() {
+        // No floors exist any more, so the only way a switched-on category is
+        // empty is an inventory with nothing in it. The file export writes `[]`
+        // there; the live payload sends `null`, which the site ignores.
         let names = reference_names();
-        let inventory = Inventory {
-            agents: vec![AgentInfo {
-                id: 1011,
-                level: 1,
-                skills: (0..6)
-                    .map(|kind| AvatarSkillLevel {
-                        skill_type: kind,
-                        level: 1,
-                    })
-                    .collect(),
-                ..AgentInfo::default()
-            }],
-            discs: vec![DiscInfo {
-                uid: 1,
-                id: 31341,
-                level: 3,
-                main_stat: DiscStat {
-                    key: 11103,
-                    ..DiscStat::default()
-                },
-                ..DiscInfo::default()
-            }],
-            ..Inventory::default()
-        };
+        let empty = Inventory::default();
 
-        let floors = ExportSettings {
-            min_agent_rarity: 5,
-            min_disc_rarity: 5,
-            min_disc_level: 10,
-            ..ExportSettings::default()
-        };
-
-        // The file export with those floors drops both records...
-        let file = Izod::from_inventory(&inventory, &names, &floors).unwrap();
-        assert!(file.characters.as_ref().unwrap().is_empty());
-        assert!(file.discs.as_ref().unwrap().is_empty());
-        // ...and so does the live payload, whose emptied categories are null.
-        let live = Izod::for_live(&inventory, &names, &floors).unwrap();
+        let live = Izod::for_live(&empty, &names, &ExportSettings::default()).unwrap();
         assert!(live.characters.is_none());
         assert!(live.discs.is_none());
         assert!(live.wengines.is_none());
         assert!(!live.to_json().contains("characters"));
 
-        let live = Izod::for_live(&inventory, &names, &ExportSettings::default()).unwrap();
-        assert_eq!(live.characters.as_ref().unwrap().len(), 1);
-        assert_eq!(live.discs.as_ref().unwrap().len(), 1);
-        assert!(live.wengines.is_none());
+        let file = Izod::from_inventory(&empty, &names, &ExportSettings::default()).unwrap();
+        assert!(file.characters.as_ref().unwrap().is_empty());
+        assert!(file.discs.as_ref().unwrap().is_empty());
+        assert!(file.wengines.as_ref().unwrap().is_empty());
     }
 
     #[test]
@@ -1367,7 +1331,7 @@ mod tests {
         // `toZodKey` is shared with the rest of the port; what matters here is
         // that every key in the export goes through it.
         let mut names = reference_names();
-        names.characters.insert(1011, ("Yanagi's Blade".into(), 5));
+        names.characters.insert(1011, "Yanagi's Blade".into());
         names.equipment.insert(31300, "Branch & Blade Song".into());
         let inventory = Inventory {
             agents: vec![AgentInfo {
@@ -1393,7 +1357,7 @@ mod tests {
             }],
             ..Inventory::default()
         };
-        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::unfiltered()).unwrap();
+        let zod = Izod::from_inventory(&inventory, &names, &ExportSettings::default()).unwrap();
         assert_eq!(zod.characters.as_ref().unwrap()[0].key, "YanagisBlade");
         assert_eq!(zod.characters.as_ref().unwrap()[0].id, "YanagisBlade");
         assert_eq!(zod.discs.as_ref().unwrap()[0].set_key, "BranchBladeSong");
